@@ -47,6 +47,7 @@ class ProcessedStore:
     units: List[Dict[str, Any]] = field(default_factory=list)
     near_misses: List[Dict[str, Any]] = field(default_factory=list)
     explanations: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    alerts: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def near_miss_units(self) -> set[str]:
@@ -106,4 +107,5 @@ def load_store(processed_dir: Path | None = None) -> ProcessedStore:
         units=_read("units.json", []),
         near_misses=_read("near_misses.json", []),
         explanations=_read("explanations.json", {}),
+        alerts=_read("alerts.json", {}),
     )

@@ -97,6 +97,20 @@ def principal_from_headers(headers: Any) -> Principal:
         this function is the single place the role enters the system -- when
         JWT verification is added, only this function changes.
     """
+    # Try Bearer-token authentication first.
+    authorization = str(headers.get("Authorization", "") or "").strip()
+    if authorization.lower().startswith("bearer "):
+        from backend.auth import jwt_handler  # local import avoids circular at module level
+        return jwt_handler.principal_from_authorization_header(authorization)
+
+    # Plain-header fallback — only active in debug/demo mode. Documented as
+    # the deferred-auth gap throughout this module. When JWT_HANDLER is set
+    # in production, this branch is unreachable.
+    from backend.auth.jwt_handler import DEBUG_ALLOW_HEADER_AUTH
+    if not DEBUG_ALLOW_HEADER_AUTH:
+        raise AuthorisationError(
+            "authentication required: send Authorization: Bearer <token>"
+        )
     role = str(headers.get(ROLE_HEADER, "") or "").strip().lower()
     if role not in settings.ROLES:
         raise AuthorisationError(

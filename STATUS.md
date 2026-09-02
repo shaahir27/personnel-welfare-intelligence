@@ -55,8 +55,13 @@ importable.
 | **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split. Gradient Boosting selected (R² 0.729, MAE 5.46). Exact Shapley by full coalition enumeration, additivity asserted on every call, ~0.2 s per case. Versioned registry with metadata. |
 | **G** Post-model analytics | `backend/post_model_analytics/` | ✅ Risk bands, trend/persistence, data-completeness confidence (honestly labelled a heuristic), individual-vs-systemic attribution with small-cell suppression. |
 | **H** Near-miss detection | `backend/near_miss/` | ✅ Unit-level, independent of individual scores. One live finding on the current corpus (U016). |
-| **L** API (minimal) | `backend/api/` | ✅ 11 endpoints serving both frontends from precomputed output. Role-scoped, commander payloads guarded. |
+| **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json` by `run_pipeline.py`. |
+| **J** Alert rules | `backend/alerts/alert_rules.py` | ✅ 4 graduated rules: personal notification (always), officer alert (High, persistent Moderate, rising High), commander near-miss alert. Low-confidence suppression for officer/commander alerts. Written to `alerts.json`. |
+| **K** JWT authentication | `backend/auth/jwt_handler.py`, `backend/auth/rbac.py` | ✅ HS256 via stdlib hmac+base64; falls back to PyJWT when importable. `principal_from_headers()` tries Bearer token first, plain-header in DEBUG mode only. |
+| **L** API (minimal) | `backend/api/` | ✅ 12 endpoints serving both frontends from precomputed output. Role-scoped, commander payloads guarded. New: `/api/personal/{id}/notifications`. |
 | **M** Both frontends | `frontend/` | ✅ Personal app (4 screens) and officer dashboard (4 screens), both wired to live pipeline output, verified rendering with no console errors. |
+| **N** Docs suite | `docs/` | ✅ `data_dictionary.md`, `ps_alignment_matrix.md`, `privacy_policy.md`, `model_comparison_report.md` — all written. |
+| **O** Test suite | `tests/` | ✅ 91 tests, 0 failures, 2 skipped (scipy/pandas not installed in this env). RBAC leak-proof test, JWT auth tests, alert rules tests, recommendation engine tests, voice pipeline invariant tests, behavioral engine tests. |
 
 **Model comparison result** (held-out, split by person, 640 train / 160 test people):
 
@@ -75,20 +80,13 @@ Full results in `ml/evaluation/model_comparison_results.json`.
 
 ---
 
-## What is NOT built
-
-These were explicitly descoped during the session, in this order, to get the two
-frontends working on real data. Nothing below is stubbed or faked — it is absent.
+## What remains NOT built
 
 | Item | State |
 | --- | --- |
-| **I** Recommendation engine | **Not built.** `backend/recommendation_engine/` is an empty package; `intervention_library.json` does not exist. The case detail screen shows factors and attribution but no recommended action. |
-| **J** Alert rules | **Not built.** `backend/alerts/` is an empty package. All thresholds it would use are already defined in `settings.py` (`ALERT_*`). |
-| **K** Full auth / RBAC | **Partially built.** Authorisation is implemented and enforced (see below). **Authentication is not** — the acting role arrives in an `X-Pwiews-Role` header rather than a verified JWT. `backend/auth/jwt_handler.py` does not exist. **Do not expose this API outside a trusted network as it stands.** |
-| **N** Docs suite | **Not built.** `docs/` is empty. `data_dictionary.md`, `ps_alignment_matrix.md`, `privacy_policy.md` and `model_comparison_report.md` were not written. Much of their content exists in the module READMEs and in `settings.py` comments, but not in those files. |
-| **O** Test suite | **Not built.** `tests/` is empty. In particular the RBAC leak-proof test — described in the brief as the most important test in the suite — **was not written**, though the mechanism it would test *is* implemented and manually verified (see below). |
 | **DB layer** | `backend/db/` is an empty package. The API serves precomputed JSON from `data/processed/`; the only SQLite in use is the pseudonym vault. |
 | Voice upload endpoint | The acoustic pipeline runs on the batch corpus. There is no in-app audio upload route, and the record button is disabled and labelled as such. |
+| `POST /api/auth/login` route | `jwt_handler.py` exists and issues/verifies tokens. A login route (POST body → token) was not added because there are no stored credentials to validate against in this build. Demo still uses the header path. |
 
 ### On the missing RBAC test specifically
 

@@ -33,6 +33,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend import pipeline  # noqa: E402
+from backend.alerts import alert_rules  # noqa: E402
 from backend.config import settings  # noqa: E402
 from backend.models import predict  # noqa: E402
 from backend.near_miss import near_miss_detector  # noqa: E402
@@ -42,6 +43,7 @@ from backend.post_model_analytics import (  # noqa: E402
     risk_classifier,
     trend_engine,
 )
+from backend.recommendation_engine import action_mapper  # noqa: E402
 
 # How many cases get a precomputed explanation. ASSUMPTION: an officer works a
 # prioritised queue from the top; anything deeper is explained on demand.
@@ -141,6 +143,18 @@ def main() -> int:
             }
         )
 
+    # Add pre-computed recommendations to every case. done after the list is
+    # fully built so recommend_from_case can read contributing_factors if they
+    # were written by the explanation loop above.
+    expl_map = explanations  # already keyed by pseudonym_id
+    for case in cases:
+        pid = case["pseudonym_id"]
+        expl = expl_map.get(pid)
+        if expl:
+            case["contributing_factors"] = expl.get("top_factors")
+        recs = action_mapper.recommend_from_case(case)
+        case["recommendations"] = [r.to_dict() for r in recs]
+
     history: Dict[str, List[Dict[str, object]]] = {}
     for pid, group in scored.groupby("pseudonym_id", sort=False):
         group = group.sort_values("snapshot_date")
@@ -188,6 +202,13 @@ def main() -> int:
         "explained_case_count": len(explanations),
     }
 
+    print("6/7  Generating alert batch ...")
+    alert_batch = alert_rules.generate_alert_batch(
+        cases=cases,
+        near_misses=[n.to_dict() for n in near_misses],
+    )
+    print(f"     {alert_batch['total_count']} alert(s) generated")
+
     written = [
         _write(out_dir / "cases.json", cases),
         _write(out_dir / "history.json", history),
@@ -195,9 +216,10 @@ def main() -> int:
         _write(out_dir / "near_misses.json", [n.to_dict() for n in near_misses]),
         _write(out_dir / "explanations.json", explanations),
         _write(out_dir / "meta.json", meta),
+        _write(out_dir / "alerts.json", alert_batch),
     ]
 
-    print("6/6  Written:")
+    print("7/7  Written:")
     for path in written:
         print(f"     {path}  ({path.stat().st_size / 1024:.0f} KB)")
 

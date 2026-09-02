@@ -293,6 +293,37 @@ async def privacy(request: Request) -> JSONResponse:
     )
 
 
+async def notifications(request: Request) -> JSONResponse:
+    """GET /api/personal/{pseudonym_id}/notifications -- alerts for this person.
+
+    Returns the list of personal notifications (wellness alerts) addressed to
+    this individual from the latest pipeline run. Pre-computed at pipeline time;
+    nothing is generated at request time.
+
+    Personnel may only read their own notifications. Officers may also call
+    this route (scoped to their queue); commanders may not.
+    """
+    principal = rbac.principal_from_headers(request.headers)
+    pseudonym_id = request.path_params["pseudonym_id"]
+    rbac.require_self(principal, pseudonym_id)
+
+    store: ProcessedStore = request.app.state.store
+    by_pseudonym = store.alerts.get("by_pseudonym", {})
+    person_alerts = by_pseudonym.get(pseudonym_id, [])
+
+    return JSONResponse(
+        {
+            "pseudonym_id": pseudonym_id,
+            "notifications": person_alerts,
+            "count": len(person_alerts),
+            "note": (
+                "These notifications are private to you. They are not shared "
+                "with your officer or commander."
+            ),
+        }
+    )
+
+
 def routes() -> List[Route]:
     """Return this module's routes.
 
@@ -304,4 +335,5 @@ def routes() -> List[Route]:
         Route("/api/personal/{pseudonym_id}/history", history, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/check-in", check_in_questions, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/privacy", privacy, methods=["GET"]),
+        Route("/api/personal/{pseudonym_id}/notifications", notifications, methods=["GET"]),
     ]

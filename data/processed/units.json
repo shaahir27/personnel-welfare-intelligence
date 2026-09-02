@@ -1,0 +1,290 @@
+[
+  {
+    "unit_id": "U001",
+    "is_suppressed": false,
+    "personnel_count": 50,
+    "mean_risk": 49.9,
+    "median_risk": 53.3,
+    "elevated_share": 0.8,
+    "high_share": 0.04,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 51.8,
+      "mean_recovery_deficit": 32.4,
+      "staffing_ratio": 0.87,
+      "thresholds_crossed": 0,
+      "personnel_count": 50
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U002",
+    "is_suppressed": false,
+    "personnel_count": 51,
+    "mean_risk": 56.8,
+    "median_risk": 55.6,
+    "elevated_share": 0.941,
+    "high_share": 0.314,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 53.1,
+      "mean_recovery_deficit": 34.0,
+      "staffing_ratio": 0.823,
+      "thresholds_crossed": 1,
+      "personnel_count": 51
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U003",
+    "is_suppressed": false,
+    "personnel_count": 54,
+    "mean_risk": 47.0,
+    "median_risk": 47.7,
+    "elevated_share": 0.778,
+    "high_share": 0.019,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 45.1,
+      "mean_recovery_deficit": 33.2,
+      "staffing_ratio": 0.836,
+      "thresholds_crossed": 1,
+      "personnel_count": 54
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U004",
+    "is_suppressed": false,
+    "personnel_count": 53,
+    "mean_risk": 45.4,
+    "median_risk": 47.4,
+    "elevated_share": 0.623,
+    "high_share": 0.038,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 41.3,
+      "mean_recovery_deficit": 32.4,
+      "staffing_ratio": 0.92,
+      "thresholds_crossed": 0,
+      "personnel_count": 53
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U005",
+    "is_suppressed": false,
+    "personnel_count": 40,
+    "mean_risk": 54.2,
+    "median_risk": 51.3,
+    "elevated_share": 0.9,
+    "high_share": 0.2,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 52.6,
+      "mean_recovery_deficit": 33.9,
+      "staffing_ratio": 0.853,
+      "thresholds_crossed": 0,
+      "personnel_count": 40
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U006",
+    "is_suppressed": false,
+    "personnel_count": 57,
+    "mean_risk": 57.0,
+    "median_risk": 57.2,
+    "elevated_share": 0.965,
+    "high_share": 0.246,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 51.3,
+      "mean_recovery_deficit": 35.3,
+      "staffing_ratio": 0.755,
+      "thresholds_crossed": 2,
+      "personnel_count": 57
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U007",
+    "is_suppressed": false,
+    "personnel_count": 55,
+    "mean_risk": 46.1,
+    "median_risk": 46.3,
+    "elevated_share": 0.727,
+    "high_share": 0.055,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 35.7,
+      "mean_recovery_deficit": 33.6,
+      "staffing_ratio": 0.836,
+      "thresholds_crossed": 1,
+      "personnel_count": 55
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U008",
+    "is_suppressed": false,
+    "personnel_count": 42,
+    "mean_risk": 55.2,
+    "median_risk": 55.2,
+    "elevated_share": 0.929,
+    "high_share": 0.214,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 52.6,
+      "mean_recovery_deficit": 33.5,
+      "staffing_ratio": 0.964,
+      "thresholds_crossed": 0,
+      "personnel_count": 42
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U009",
+    "is_suppressed": false,
+    "personnel_count": 55,
+    "mean_risk": 45.4,
+    "median_risk": 47.2,
+    "elevated_share": 0.655,
+    "high_share": 0.0,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 39.6,
+      "mean_recovery_deficit": 30.1,
+      "staffing_ratio": 0.836,
+      "thresholds_crossed": 1,
+      "personnel_count": 55
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U010",
+    "is_suppressed": false,
+    "personnel_count": 53,
+    "mean_risk": 63.0,
+    "median_risk": 64.9,
+    "elevated_share": 0.981,
+    "high_share": 0.491,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 56.6,
+      "mean_recovery_deficit": 35.5,
+      "staffing_ratio": 0.692,
+      "thresholds_crossed": 3,
+      "personnel_count": 53
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U011",
+    "is_suppressed": false,
+    "personnel_count": 34,
+    "mean_risk": 52.5,
+    "median_risk": 53.6,
+    "elevated_share": 0.882,
+    "high_share": 0.088,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 46.6,
+      "mean_recovery_deficit": 33.4,
+      "staffing_ratio": 0.701,
+      "thresholds_crossed": 1,
+      "personnel_count": 34
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U012",
+    "is_suppressed": false,
+    "personnel_count": 47,
+    "mean_risk": 58.8,
+    "median_risk": 58.2,
+    "elevated_share": 0.936,
+    "high_share": 0.383,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 54.9,
+      "mean_recovery_deficit": 34.7,
+      "staffing_ratio": 0.75,
+      "thresholds_crossed": 1,
+      "personnel_count": 47
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U013",
+    "is_suppressed": false,
+    "personnel_count": 41,
+    "mean_risk": 51.7,
+    "median_risk": 53.8,
+    "elevated_share": 0.78,
+    "high_share": 0.146,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 49.5,
+      "mean_recovery_deficit": 29.9,
+      "staffing_ratio": 0.897,
+      "thresholds_crossed": 0,
+      "personnel_count": 41
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U014",
+    "is_suppressed": false,
+    "personnel_count": 57,
+    "mean_risk": 46.5,
+    "median_risk": 46.8,
+    "elevated_share": 0.754,
+    "high_share": 0.053,
+    "is_systemically_strained": false,
+    "near_miss_pressure": {
+      "mean_demand": 40.8,
+      "mean_recovery_deficit": 32.8,
+      "staffing_ratio": 0.841,
+      "thresholds_crossed": 1,
+      "personnel_count": 57
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U015",
+    "is_suppressed": false,
+    "personnel_count": 67,
+    "mean_risk": 59.4,
+    "median_risk": 60.2,
+    "elevated_share": 0.955,
+    "high_share": 0.358,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 55.3,
+      "mean_recovery_deficit": 33.9,
+      "staffing_ratio": 0.805,
+      "thresholds_crossed": 2,
+      "personnel_count": 67
+    },
+    "is_near_miss": false
+  },
+  {
+    "unit_id": "U016",
+    "is_suppressed": false,
+    "personnel_count": 44,
+    "mean_risk": 57.6,
+    "median_risk": 59.6,
+    "elevated_share": 0.955,
+    "high_share": 0.25,
+    "is_systemically_strained": true,
+    "near_miss_pressure": {
+      "mean_demand": 57.9,
+      "mean_recovery_deficit": 35.6,
+      "staffing_ratio": 0.729,
+      "thresholds_crossed": 3,
+      "personnel_count": 44
+    },
+    "is_near_miss": true
+  }
+]

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pwiews</title>
+  <link rel="stylesheet" href="./shared/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">pw<span>i</span>ews</div>
+      <div class="brand-sub">Personnel Welfare Intelligence &amp; Early Warning System</div>
+    </header>
+    <main>
+      <h1 class="page-title">Choose an interface</h1>
+      <p class="page-sub">
+        Two separate applications against the same API. The commander view inside the
+        dashboard is a structurally separate component calling separate endpoints — not
+        the officer view with fields hidden.
+      </p>
+      <div class="grid two">
+        <div class="card">
+          <h2>Personnel</h2>
+          <p class="small">Your own indicators, trend, optional check-in, and a plain
+             account of what data the system holds about you.</p>
+          <p><a href="./personal-app/">Open the Personal Wellness App →</a></p>
+        </div>
+        <div class="card">
+          <h2>Welfare officer / Commander</h2>
+          <p class="small">Prioritised welfare queue, case detail with exact Shapley
+             contributing factors, a what-if simulator, and the unit-level commander view.</p>
+          <p><a href="./officer-dashboard/">Open the Welfare Dashboard →</a></p>
+        </div>
+      </div>
+    </main>
+    <footer class="legal">Welfare support tool. Not for disciplinary use.</footer>
+  </div>
+</body>
+</html>

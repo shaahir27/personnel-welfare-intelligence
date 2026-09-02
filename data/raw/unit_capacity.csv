@@ -1,0 +1,17 @@
+unit_id,unit_name,region_type,operational_tempo,sanctioned_strength,on_strength,staffing_ratio
+U001,Urban Static Bn 1,urban_static,0.5535,69,60,0.8696
+U002,Insurgency Affected Bn 2,insurgency_affected,0.782,62,51,0.8226
+U003,Urban Static Bn 3,urban_static,0.3722,67,56,0.8358
+U004,Urban Static Bn 4,urban_static,0.4395,50,46,0.92
+U005,Border Bn 5,border,0.7572,68,58,0.8529
+U006,Border Bn 6,border,0.6739,49,37,0.7551
+U007,Training Bn 7,training,0.2532,61,51,0.8361
+U008,Border Bn 8,border,0.5738,55,53,0.9636
+U009,Training Bn 9,training,0.3855,73,61,0.8356
+U010,Insurgency Affected Bn 10,insurgency_affected,0.8355,65,45,0.6923
+U011,Border Bn 11,border,0.6385,67,47,0.7015
+U012,Insurgency Affected Bn 12,insurgency_affected,0.7195,40,30,0.75
+U013,Border Bn 13,border,0.5538,58,52,0.8966
+U014,Urban Static Bn 14,urban_static,0.3566,63,53,0.8413
+U015,Insurgency Affected Bn 15,insurgency_affected,0.8363,77,62,0.8052
+U016,Border Bn 16,border,0.7134,59,43,0.7288

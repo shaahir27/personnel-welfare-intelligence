@@ -1,0 +1,655 @@
+{
+  "unit_capacity": {
+    "description": "One row per unit: establishment strength and staffing ratio.",
+    "primary_key": [
+      "unit_id"
+    ],
+    "foreign_keys": {},
+    "columns": [
+      {
+        "name": "unit_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "unit_name",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "region_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "operational_tempo",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "sanctioned_strength",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "on_strength",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "staffing_ratio",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  },
+  "personnel": {
+    "description": "One row per person. Contains the direct identifiers that pseudonymisation strips before anything reaches analytics.",
+    "primary_key": [
+      "personnel_id"
+    ],
+    "foreign_keys": {
+      "unit_id": "unit_capacity"
+    },
+    "columns": [
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "service_number",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "name",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "rank",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": [
+          "Constable",
+          "Head Constable",
+          "Assistant Sub-Inspector",
+          "Sub-Inspector",
+          "Inspector",
+          "Assistant Commandant",
+          "Deputy Commandant",
+          "Commandant"
+        ]
+      },
+      {
+        "name": "is_jawan_rank",
+        "kind": "boolean",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "unit_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "region_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "posting_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": [
+          "hard_area",
+          "field",
+          "static_station"
+        ]
+      },
+      {
+        "name": "date_of_birth",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "date_of_joining",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "years_of_service",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "current_posting_start_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "family_separated",
+        "kind": "boolean",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "unit_operational_tempo",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "exposure_propensity",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  },
+  "leave_records": {
+    "description": "One row per leave spell availed.",
+    "primary_key": [
+      "leave_id"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "leave_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "leave_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "start_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "end_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "days_availed",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  },
+  "deployment_history": {
+    "description": "One row per deployment spell; the current spell has no end date.",
+    "primary_key": [
+      "deployment_id"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel",
+      "unit_id": "unit_capacity"
+    },
+    "columns": [
+      {
+        "name": "deployment_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "unit_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "location_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": [
+          "hard_area",
+          "field",
+          "static_station"
+        ]
+      },
+      {
+        "name": "deployment_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "start_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "end_date",
+        "kind": "date",
+        "required": true,
+        "nullable": true,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "is_current",
+        "kind": "boolean",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      }
+    ]
+  },
+  "duty_logs": {
+    "description": "One row per person-month of duty. The workload backbone.",
+    "primary_key": [
+      "personnel_id",
+      "month_start"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "month_start",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "days_on_duty",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "total_duty_hours",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "mean_daily_duty_hours",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "daily_duty_hours_sd",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "night_shifts",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "weekly_offs_entitled",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "weekly_offs_availed",
+        "kind": "integer",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  },
+  "transfer_records": {
+    "description": "One row per transfer between units.",
+    "primary_key": [
+      "transfer_id"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "transfer_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "from_unit_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "to_unit_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "transfer_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "transfer_type",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      }
+    ]
+  },
+  "training_records": {
+    "description": "One row per training course attended.",
+    "primary_key": [
+      "training_id"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "training_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "course_name",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "start_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "end_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "training_hours",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  },
+  "voice_samples": {
+    "description": "Index of voluntary voice check-ins. Consent is recorded per sample; no sample is processed without it.",
+    "primary_key": [
+      "sample_id"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "sample_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "sample_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "consent_version",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "duration_sec",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      },
+      {
+        "name": "audio_path",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "latent_strain",
+        "kind": "float",
+        "required": false,
+        "nullable": true,
+        "non_negative": false,
+        "allowed_values": null
+      }
+    ]
+  },
+  "ground_truth_labels": {
+    "description": "Synthetic training target. Exists only because the corpus is synthetic; a real deployment's label would come from validated welfare assessments.",
+    "primary_key": [
+      "personnel_id",
+      "snapshot_date"
+    ],
+    "foreign_keys": {
+      "personnel_id": "personnel"
+    },
+    "columns": [
+      {
+        "name": "personnel_id",
+        "kind": "string",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "snapshot_date",
+        "kind": "date",
+        "required": true,
+        "nullable": false,
+        "non_negative": false,
+        "allowed_values": null
+      },
+      {
+        "name": "welfare_risk_score",
+        "kind": "float",
+        "required": true,
+        "nullable": false,
+        "non_negative": true,
+        "allowed_values": null
+      }
+    ]
+  }
+}

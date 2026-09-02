@@ -1,0 +1,83 @@
+/**
+ * CaseDetail — one case in full for a welfare officer.
+ * One job: score, trajectory, contributing factors, confidence, attribution and
+ * any unit near-miss, with the handling constraint stated on the screen.
+ */
+import { api } from "../../../shared/api.js";
+import { badge, el, factorBar, meter, sparkline, trendText } from "../../../shared/ui.js";
+
+/**
+ * Render the case detail screen.
+ * @param {string} caseId Pseudonym of the case.
+ * @param {Function} go Navigation callback.
+ * @returns {Promise<HTMLElement>} The screen node.
+ */
+export async function renderCaseDetail(caseId, go) {
+  if (!caseId) {
+    return el("div", { class: "empty", text: "Select a case from the welfare queue." });
+  }
+  const data = await api.officer.case(caseId);
+  const root = el("div");
+  root.appendChild(el("h1", { class: "page-title", text: "Case detail" }));
+  root.appendChild(el("p", { class: "page-sub mono", text: `${data.pseudonym_id} · unit ${data.unit_id} · ${data.posting_type} · ${data.snapshot_date}` }));
+  root.appendChild(el("div", { class: "note caution", text: data.handling_note }));
+
+  root.appendChild(el("div", { class: "grid two" }, [
+    el("div", { class: "card" }, [
+      el("h2", { text: "Level" }),
+      el("div", { class: "score-row" }, [
+        el("span", { class: "score-value", text: String(data.risk.score) }),
+        el("span", { class: "score-max", text: "/ 100" }),
+        badge(data.risk.level),
+      ]),
+      data.trend ? el("div", { class: "small muted", style: "margin-top:8px", text:
+        `${trendText(data.trend.direction)} · ${data.trend.slope_per_30_days} pts / 30 days · ` +
+        `elevated ${data.trend.persistence_snapshots} snapshot(s)` }) : null,
+    ]),
+    el("div", { class: "card" }, [
+      el("h2", { text: "Individual or systemic" }),
+      el("div", {}, [badge(data.attribution.classification === "Systemic" ? "Moderate" : "Normal", true),
+        el("span", { class: "small", text: ` ${data.attribution.classification}` })]),
+      el("p", { class: "small", style: "margin-top:8px", text: data.attribution.explanation }),
+    ]),
+  ]));
+
+  root.appendChild(el("div", { class: "card" }, [
+    el("h2", { text: "Trajectory" }),
+    sparkline(data.history, { risk_moderate_min: 40, risk_high_min: 65 }),
+  ]));
+
+  const factorCard = el("div", { class: "card" }, [el("h2", { text: "Contributing factors (exact Shapley)" })]);
+  if (data.contributing_factors && data.contributing_factors.length) {
+    const maxAbs = Math.max(...data.contributing_factors.map((f) => Math.abs(f.contribution)));
+    data.contributing_factors.forEach((f) => factorCard.appendChild(factorBar(f, maxAbs)));
+  } else {
+    factorCard.appendChild(el("div", { class: "small muted", text: "No precomputed explanation for this case." }));
+  }
+  root.appendChild(factorCard);
+
+  const labels = data.signal_labels || {};
+  const indicators = el("div", { class: "card" }, [el("h2", { text: "All indicators" })]);
+  Object.entries(data.signals).forEach(([name, value]) => {
+    if (name === "voice_signal_present") return;
+    if (name === "voice_stress_signal" && !data.has_voice_signal) return;
+    indicators.appendChild(meter(labels[name] || name, value));
+  });
+  root.appendChild(indicators);
+
+  root.appendChild(el("div", { class: "card" }, [
+    el("h2", { text: "Data confidence" }),
+    el("div", { class: "small", text: `${data.confidence.level} (${(data.confidence.score * 100).toFixed(0)}% completeness)` }),
+    el("div", { class: "note caution", text: data.confidence.disclaimer }),
+  ]));
+
+  if (data.unit_near_miss) {
+    root.appendChild(el("div", { class: "card" }, [
+      el("h2", { text: "Unit near-miss" }),
+      el("p", { class: "small", text: data.unit_near_miss.summary }),
+    ]));
+  }
+
+  root.appendChild(el("button", { class: "ghost", text: "Open in what-if simulator", onclick: () => go("whatif", caseId) }));
+  return root;
+}

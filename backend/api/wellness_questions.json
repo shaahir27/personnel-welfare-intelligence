@@ -1,0 +1,117 @@
+{
+  "_about": {
+    "purpose": "Fixed bank of optional self-assessment questions for the personal wellness app. Selection is rule-based: two general questions plus up to three tagged to the signals currently contributing most to the person's own score. No question is generated at request time and no language model is involved anywhere in this path.",
+    "framing_rule": "Every question asks about circumstances or how the person is finding them. None asks the person to self-diagnose, and none is phrased so that an answer could read as an admission. Answers are stored against the person's own record and are never shown to a commander.",
+    "answer_scale": "0 = not at all, 4 = a great deal"
+  },
+  "general": [
+    {
+      "id": "GEN01",
+      "text": "Over the last two weeks, how manageable has your workload felt?",
+      "reverse_scored": true
+    },
+    {
+      "id": "GEN02",
+      "text": "Over the last two weeks, how well have you been able to rest when off duty?",
+      "reverse_scored": true
+    },
+    {
+      "id": "GEN03",
+      "text": "Is there anything about your current posting you would want a welfare officer to know?",
+      "free_text": true,
+      "optional": true
+    }
+  ],
+  "by_signal": {
+    "workload_deviation_signal": [
+      {
+        "id": "WRK01",
+        "text": "How often in the last month have you worked beyond your rostered hours?"
+      },
+      {
+        "id": "WRK02",
+        "text": "How often has your duty load left you with too little time to eat or sleep properly?"
+      }
+    ],
+    "recovery_pattern_signal": [
+      {
+        "id": "REC01",
+        "text": "When you last had time off, how much did it help you recover?",
+        "reverse_scored": true
+      },
+      {
+        "id": "REC02",
+        "text": "Have you been able to apply for leave when you wanted to?",
+        "reverse_scored": true
+      }
+    ],
+    "deployment_stability_signal": [
+      {
+        "id": "DEP01",
+        "text": "How much has the length of your current deployment been weighing on you?"
+      },
+      {
+        "id": "DEP02",
+        "text": "How much contact have you been able to keep with family during this deployment?",
+        "reverse_scored": true
+      }
+    ],
+    "schedule_irregularity_signal": [
+      {
+        "id": "SCH01",
+        "text": "How difficult has it been to plan around your duty roster?"
+      },
+      {
+        "id": "SCH02",
+        "text": "How much has changing shift timing affected your sleep?"
+      }
+    ],
+    "posting_hardship_signal": [
+      {
+        "id": "PST01",
+        "text": "How well are the living and working conditions at your current posting working for you?",
+        "reverse_scored": true
+      },
+      {
+        "id": "PST02",
+        "text": "How much are you looking forward to your next rotation?"
+      }
+    ],
+    "transfer_churn_signal": [
+      {
+        "id": "TRF01",
+        "text": "How settled do you feel after your recent move?",
+        "reverse_scored": true
+      },
+      {
+        "id": "TRF02",
+        "text": "How much disruption did your last transfer cause for your family?"
+      }
+    ],
+    "training_load_signal": [
+      {
+        "id": "TRN01",
+        "text": "How manageable have recent training commitments been alongside your duty?",
+        "reverse_scored": true
+      }
+    ],
+    "leave_deficit_signal": [
+      {
+        "id": "LVE01",
+        "text": "What has made it hardest to take the leave you are entitled to?",
+        "free_text": true,
+        "optional": true
+      },
+      {
+        "id": "LVE02",
+        "text": "How much would taking your full leave entitlement help right now?"
+      }
+    ],
+    "voice_stress_signal": [
+      {
+        "id": "VOI01",
+        "text": "How are you finding things this week compared with a month ago?"
+      }
+    ]
+  }
+}

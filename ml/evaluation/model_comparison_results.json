@@ -1,0 +1,165 @@
+{
+  "split": {
+    "train_rows": 3840,
+    "test_rows": 960,
+    "train_people": 640,
+    "test_people": 160,
+    "grouped_by": "pseudonym_id"
+  },
+  "selected_model": "gradient_boosting",
+  "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Ridge Regression (L2, CV-selected alpha)) was ahead by only -0.0041 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
+  "candidates": [
+    {
+      "name": "linear_regression",
+      "display_name": "Linear Regression (OLS)",
+      "is_tree_based": false,
+      "scales_inputs": true,
+      "rationale": "Baseline. Establishes whether the signal-to-risk relationship is even roughly linear, and therefore whether any non-linear model in this comparison is earning its added complexity.",
+      "train_seconds": 0.003,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.4939,
+        "rmse": 7.0126,
+        "r2": 0.7244,
+        "band_accuracy": 0.7708,
+        "high_recall": 0.6242,
+        "high_precision": 0.6788,
+        "escalation_recall": 0.9541
+      }
+    },
+    {
+      "name": "ridge_regression",
+      "display_name": "Ridge Regression (L2, CV-selected alpha)",
+      "is_tree_based": false,
+      "scales_inputs": true,
+      "rationale": "Regularised linear variant. The behavioral signals are correlated by construction, which destabilises OLS coefficients; ridge is the standard remedy and is nearly free to include.",
+      "train_seconds": 0.108,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.4929,
+        "rmse": 7.0114,
+        "r2": 0.7245,
+        "band_accuracy": 0.7719,
+        "high_recall": 0.6242,
+        "high_precision": 0.6788,
+        "escalation_recall": 0.9554
+      }
+    },
+    {
+      "name": "lasso_regression",
+      "display_name": "Lasso Regression (L1, CV-selected alpha)",
+      "is_tree_based": false,
+      "scales_inputs": true,
+      "rationale": "Sparse linear variant. Zeroing a coefficient outright answers whether every behavioral signal is actually needed -- useful regardless of which model wins, since each signal has a data-collection cost.",
+      "train_seconds": 0.038,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.4931,
+        "rmse": 7.0117,
+        "r2": 0.7245,
+        "band_accuracy": 0.7708,
+        "high_recall": 0.6242,
+        "high_precision": 0.6788,
+        "escalation_recall": 0.9541
+      }
+    },
+    {
+      "name": "random_forest",
+      "display_name": "Random Forest Regressor",
+      "is_tree_based": true,
+      "scales_inputs": false,
+      "rationale": "Bagged trees. Captures signal interactions without being told about them, which suits an interactive phenomenon, and supports an exact tree-based SHAP explanation.",
+      "train_seconds": 1.894,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.8028,
+        "rmse": 7.338,
+        "r2": 0.6982,
+        "band_accuracy": 0.7708,
+        "high_recall": 0.6577,
+        "high_precision": 0.7206,
+        "escalation_recall": 0.9514
+      }
+    },
+    {
+      "name": "gradient_boosting",
+      "display_name": "Gradient Boosting Regressor",
+      "is_tree_based": true,
+      "scales_inputs": false,
+      "rationale": "Sequentially boosted trees, usually the strongest family on tabular data of this shape, and tree-based so explainability costs nothing.",
+      "train_seconds": 2.229,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.4566,
+        "rmse": 6.9587,
+        "r2": 0.7286,
+        "band_accuracy": 0.7812,
+        "high_recall": 0.651,
+        "high_precision": 0.7029,
+        "escalation_recall": 0.9475
+      }
+    },
+    {
+      "name": "hist_gradient_boosting",
+      "display_name": "Histogram Gradient Boosting Regressor",
+      "is_tree_based": true,
+      "scales_inputs": false,
+      "rationale": "Histogram-binned boosting -- scikit-learn's equivalent of the LightGBM family, which is not installable here. Keeps that algorithm family in the comparison, and handles NaN natively.",
+      "train_seconds": 0.395,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.5968,
+        "rmse": 7.1374,
+        "r2": 0.7145,
+        "band_accuracy": 0.7635,
+        "high_recall": 0.6309,
+        "high_precision": 0.6763,
+        "escalation_recall": 0.9423
+      }
+    },
+    {
+      "name": "support_vector_regression",
+      "display_name": "Support Vector Regression (RBF kernel)",
+      "is_tree_based": false,
+      "scales_inputs": true,
+      "rationale": "Kernel method. Included for completeness even though it is unlikely to win: it fits a different kind of surface, so its result is informative either way.",
+      "train_seconds": 0.731,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.5569,
+        "rmse": 7.0921,
+        "r2": 0.7181,
+        "band_accuracy": 0.7771,
+        "high_recall": 0.6913,
+        "high_precision": 0.6913,
+        "escalation_recall": 0.9501
+      }
+    },
+    {
+      "name": "mlp_regressor",
+      "display_name": "Multi-Layer Perceptron Regressor",
+      "is_tree_based": false,
+      "scales_inputs": true,
+      "rationale": "Neural reference point. Answers whether the pattern needs a network at all, with a measurement rather than an assertion.",
+      "train_seconds": 1.341,
+      "cv_r2_mean": null,
+      "cv_r2_sd": null,
+      "metrics": {
+        "mae": 5.5521,
+        "rmse": 7.0154,
+        "r2": 0.7242,
+        "band_accuracy": 0.7729,
+        "high_recall": 0.6913,
+        "high_precision": 0.6867,
+        "escalation_recall": 0.958
+      }
+    }
+  ]
+}

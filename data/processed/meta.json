@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-09-01T23:42:45.382301+00:00",
+  "reference_date": "2026-09-01",
+  "latest_snapshot": "2026-09-01",
+  "population": 800,
+  "snapshot_count": 6,
+  "voice_coverage": 0.0042,
+  "model": {
+    "version": "v20260901T233616Z",
+    "name": "gradient_boosting",
+    "display_name": "Gradient Boosting Regressor",
+    "is_tree_based": true,
+    "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Ridge Regression (L2, CV-selected alpha)) was ahead by only -0.0041 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
+    "metrics": {
+      "mae": 5.456563235380533,
+      "rmse": 6.958714990823282,
+      "r2": 0.728626799752873,
+      "band_accuracy": 0.78125,
+      "high_recall": 0.6510067114093959,
+      "high_precision": 0.7028985507246377,
+      "escalation_recall": 0.94750656167979
+    },
+    "feature_names": [
+      "workload_deviation_signal",
+      "recovery_pattern_signal",
+      "deployment_stability_signal",
+      "schedule_irregularity_signal",
+      "posting_hardship_signal",
+      "transfer_churn_signal",
+      "training_load_signal",
+      "leave_deficit_signal",
+      "voice_stress_signal",
+      "voice_signal_present"
+    ]
+  },
+  "thresholds": {
+    "risk_moderate_min": 40.0,
+    "risk_high_min": 65.0,
+    "min_unit_size_for_aggregate": 10
+  },
+  "band_distribution": {
+    "Normal": 124,
+    "Moderate": 530,
+    "High": 146
+  },
+  "signal_labels": {
+    "workload_deviation_signal": "Duty hours above the standard workload",
+    "recovery_pattern_signal": "Limited recovery time since last leave",
+    "deployment_stability_signal": "Length of continuous deployment",
+    "schedule_irregularity_signal": "Irregular and unpredictable duty schedule",
+    "posting_hardship_signal": "Extended posting in a hard-area location",
+    "transfer_churn_signal": "Frequent transfers in a short period",
+    "training_load_signal": "Training commitments on top of operational duty",
+    "leave_deficit_signal": "Leave entitlement largely unused",
+    "voice_stress_signal": "Voluntary voice check-in differs from personal baseline",
+    "voice_signal_present": "Voice check-in data availability"
+  },
+  "explained_case_count": 150
+}

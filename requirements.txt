@@ -1,0 +1,17 @@
+# Core Dependencies (Required)
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+joblib>=1.2.0
+starlette>=0.27.0
+uvicorn>=0.22.0
+
+# Optional Enhancement Dependencies
+# The system automatically uses zero-dependency built-in fallbacks if missing
+fastapi>=0.95.0
+shap>=0.41.0
+librosa>=0.10.0
+
+# Testing
+pytest>=7.0.0

@@ -88,10 +88,9 @@ Full results in `ml/evaluation/model_comparison_results.json`.
 | Voice upload endpoint | The acoustic pipeline runs on the batch corpus. There is no in-app audio upload route, and the record button is disabled and labelled as such. |
 | `POST /api/auth/login` route | `jwt_handler.py` exists and issues/verifies tokens. A login route (POST body → token) was not added because there are no stored credentials to validate against in this build. Demo still uses the header path. |
 
-### On the missing RBAC test specifically
+### On the RBAC guarantee & test suite
 
-The guarantee is implemented in three layers and was verified by hand, but not
-by an automated test:
+The guarantee is implemented in three redundant layers and is verified by both manual inspection and automated tests:
 
 1. No commander route accepts an individual identifier — there is no
    `/api/commander/case/{id}` to call.
@@ -101,13 +100,7 @@ by an automated test:
    depths and raises `IndividualDataLeak` if any field in
    `settings.COMMANDER_FORBIDDEN_FIELDS` appears.
 
-Manually verified during the build: a commander calling
-`/api/officer/queue` receives **403**, and `/api/commander/units` returns unit
-aggregates with no `pseudonym_id`, no `welfare_risk_score`, no `risk_level` and
-no `contributing_factors` anywhere in the payload.
-
-**Writing `tests/test_rbac_api.py` should be the first thing done next.** The
-guard function is already factored to make it a short test.
+**Automated verification:** `tests/test_rbac_api.py` explicitly tests and proves this structural guarantee across flat, nested, and list-level payloads, confirming that commander responses cannot leak individual data.
 
 ---
 

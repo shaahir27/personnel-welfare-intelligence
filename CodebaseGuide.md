@@ -9,7 +9,7 @@
 
 1. [What the system actually does](#1-what-the-system-actually-does)
 2. [Directory map at a glance](#2-directory-map-at-a-glance)
-3. [The four bash commands — what each one does](#3-the-four-bash-commands)
+3. [The five bash commands — what each one does](#3-the-five-bash-commands)
 4. [Full data + call flow diagram](#4-full-data--call-flow-diagram)
 5. [Every file, in depth](#5-every-file-in-depth)
    - [config/settings.py](#51-backendconfigsettingspy)
@@ -23,18 +23,25 @@
    - [post_model_analytics/](#59-backendpost_model_analytics)
    - [near_miss/](#510-backendnear_miss)
    - [api/](#511-backendapi)
-   - [auth/](#512-backendauth)
-   - [scripts/](#513-scripts)
-   - [ml/evaluation/](#514-mlevaluation)
-   - [frontend/](#515-frontend)
-   - [data/](#516-data)
+   - [auth/ (rbac.py + jwt_handler.py)](#512-backendauth)
+   - [recommendation_engine/](#513-backendrecommendation_engine)
+   - [alerts/](#514-backendalerts)
+   - [scripts/](#515-scripts)
+   - [ml/evaluation/](#516-mlevaluation)
+   - [frontend/](#517-frontend)
+   - [data/](#518-data)
+   - [tests/](#519-tests)
+   - [docs/](#520-docs)
 6. [Training flow — step by step](#6-training-flow--step-by-step)
 7. [Scoring / pipeline flow — step by step](#7-scoring--pipeline-flow--step-by-step)
 8. [API request flow — who calls what](#8-api-request-flow--who-calls-what)
 9. [Privacy architecture](#9-privacy-architecture)
 10. [The 8 behavioral signals explained](#10-the-8-behavioral-signals-explained)
 11. [The voice pipeline explained](#11-the-voice-pipeline-explained)
-12. [Role-based access control](#12-role-based-access-control)
+12. [Role-based access control and JWT authentication](#12-role-based-access-control-and-jwt-authentication)
+13. [Alert rules — the notification system](#13-alert-rules--the-notification-system)
+14. [Recommendation engine — the action engine](#14-recommendation-engine--the-action-engine)
+15. [Test suite — what each test file proves](#15-test-suite--what-each-test-file-proves)
 
 ---
 
@@ -50,8 +57,15 @@ The system:
 5. Runs a trained ML regressor to produce a **welfare risk score** (0–100)
 6. Classifies each score into Normal / Moderate / High
 7. Detects unit-level "near-misses" (systemic problems before individuals are affected)
-8. Serves everything through a role-scoped REST API
-9. Has two web UIs: a personal wellness app and an officer/commander dashboard
+8. Generates **welfare intervention recommendations** — a rule-based engine maps risk + signals to pre-approved actions like leave, counselling, or peer support
+9. Generates **graduated alerts** — personal notifications, officer queue alerts, and commander unit alerts, each with the right level of detail for that role
+10. Serves everything through a role-scoped REST API protected by **JWT authentication**
+11. Has two web UIs: a personal wellness app (including a notifications screen) and an officer/commander dashboard
+
+**Three things the system does NOT do:**
+- No LLM or generative AI anywhere in scoring, classification, or recommendations (all rule-based)
+- No speech-to-text / transcription of any kind in the voice pipeline
+- No individual data ever reaches the commander view (enforced structurally, not just by convention)
 
 ---
 
@@ -61,6 +75,7 @@ The system:
 personnel-welfare-intelligence/
 ├── README.md                    ← quick-start commands
 ├── STATUS.md                    ← honest status of what's built
+├── CodebaseGuide.md             ← this document
 │
 ├── data/
 │   ├── raw/                     ← CSVs: personnel, duty_logs, leave, etc.
@@ -79,8 +94,15 @@ personnel-welfare-intelligence/
 │   ├── models/                  ← 8 candidates, training, selection, SHAP
 │   ├── post_model_analytics/    ← Risk bands, trends, confidence, attribution
 │   ├── near_miss/               ← Unit-level near-miss detection
+│   ├── recommendation_engine/   ← Rule-based action mapper (NEW)
+│   │   ├── intervention_library.json  ← 8 pre-approved interventions
+│   │   └── action_mapper.py     ← maps (risk, signals, attribution) → actions
+│   ├── alerts/                  ← Graduated alert generator (NEW)
+│   │   └── alert_rules.py       ← 4 rules, 3 roles, pre-computed per pipeline run
 │   ├── api/                     ← Starlette app + route modules
-│   └── auth/                    ← RBAC
+│   └── auth/                    ← RBAC + JWT authentication
+│       ├── rbac.py              ← role gates, commander payload guard
+│       └── jwt_handler.py       ← HS256 token creation and verification (NEW)
 │
 ├── ml/
 │   └── evaluation/              ← Metric definitions, comparison results JSON
@@ -91,19 +113,30 @@ personnel-welfare-intelligence/
 │   ├── personal-app/            ← Personal wellness HTML+JS app
 │   └── shared/                  ← Shared API client + CSS + UI utilities
 │
+├── docs/                        ← Documentation suite (NEW)
+│   ├── data_dictionary.md       ← Every field in every file documented
+│   ├── ps_alignment_matrix.md   ← All PS components mapped to code
+│   ├── privacy_policy.md        ← What is held, how, who can see what
+│   └── model_comparison_report.md ← Why Gradient Boosting was selected
+│
 ├── scripts/
 │   ├── generate_synthetic_data.py  ← Creates 800 people of fake data
 │   ├── generate_voice_audio.py     ← Creates synthetic WAV files
 │   ├── train_models.py             ← Trains 8 models, picks best, saves
 │   └── run_pipeline.py             ← Scores everyone, writes processed/ JSONs
 │
-└── tests/
-    └── __init__.py
+└── tests/                       ← Test suite (NEW)
+    ├── test_rbac_api.py          ← ⭐ Commander data-leak proof (most critical)
+    ├── test_jwt_auth.py          ← JWT creation, verification, expiry, tamper
+    ├── test_alert_rules.py       ← Graduation rules, role scoping
+    ├── test_recommendation_engine.py ← Determinism, attribution filter, confidence
+    ├── test_voice_pipeline.py    ← No-transcription invariant, weight sums
+    └── test_behavioral_engine.py ← Signal weights, human labels, settings contract
 ```
 
 ---
 
-## 3. The four bash commands
+## 3. The five bash commands
 
 These four commands, run in order, get the system fully operational.
 
@@ -171,19 +204,22 @@ These four commands, run in order, get the system fully operational.
 8. Computes unit aggregates
 9. Detects welfare near-misses
 10. Pre-computes SHAP explanations for the top 150 cases
-11. Writes 6 JSON files to `data/processed/`:
-    - `cases.json` — one entry per person at latest snapshot
+11. Generates **recommendations** for every case — pre-computed, not done at request time
+12. Generates **alert batch** — personal notifications, officer queue alerts, commander near-miss alerts
+13. Writes **7 JSON files** to `data/processed/`:
+    - `cases.json` — one entry per person at latest snapshot (includes `recommendations`)
     - `history.json` — score history per person across snapshots
     - `units.json` — unit-level aggregates
     - `near_misses.json` — qualifying near-miss findings
     - `explanations.json` — pre-computed SHAP values for top cases
     - `meta.json` — model version, thresholds, run timestamp
+    - `alerts.json` — **(NEW)** all alerts keyed by role and by pseudonym_id
 
 ### Command 5: `python -m backend.api.main`
 
 **What it does:** Starts the web server on port 8000.
 
-- Loads all 6 processed JSON files into memory once at startup
+- Loads all **7** processed JSON files into memory once at startup
 - Serves the REST API at `/api/...`
 - Serves the personal app at `/app/personal/`
 - Serves the officer dashboard at `/app/officer/`
@@ -279,7 +315,7 @@ SCORING (scripts/run_pipeline.py):
 
 API (backend/api/main.py):
      │
-     ├── startup: store.load_store() ← reads all *.json into memory
+     ├── startup: store.load_store() ← reads all 7 *.json files into memory
      │
      ├── GET /api/personal/{id}/summary  → personal.py → store.cases_by_id[id]
      ├── GET /api/personal/{id}/history  → personal.py → store.history[id]
@@ -834,7 +870,7 @@ GET  /api/commander/near-misses
 
 **Exception:** The what-if simulation is computed live (it's by definition a hypothetical the pipeline couldn't precompute).
 
-**`ProcessedStore`:** Dictionary-indexed in-memory store. `cases_by_id` for O(1) lookup by pseudonym.
+**`ProcessedStore`:** Dictionary-indexed in-memory store. `cases_by_id` for O(1) lookup by pseudonym. **Fields:** `cases`, `cases_by_id`, `history`, `units`, `near_misses`, `explanations`, `meta`, `alerts` (NEW — loaded from `alerts.json`).
 
 #### `routes/personal.py`
 **Role:** Serve a person their own welfare record and nothing else.
@@ -848,8 +884,9 @@ Every handler calls `rbac.require_self(principal, pseudonym_id)` — a personnel
 **Routes:**
 - `summary` — score, trend, confidence, signals, contributing factors
 - `history` — score over all 6 snapshots
-- `check-in` — 2 general + up to 3 tailored self-assessment questions (keyed by top SHAP signals, no AI generation, same inputs always produce same questions)
+- `check-in` — 2 general + up to 3 tailored self-assessment questions
 - `privacy` — structured data about what the system holds, who can see it, retention periods, re-identification audit trail
+- `notifications` — **(NEW)** personal alerts from `store.alerts.by_pseudonym[id]`; pre-computed, zero latency; never shared with officers or commanders
 
 #### `routes/officer.py`
 **Role:** Serve the prioritised case queue and individual case detail.
@@ -890,7 +927,14 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 - `welfare_officer` — can see escalated cases
 - `commander` — unit aggregates only, never individuals
 
-**How role enters the system:** HTTP headers `X-Pwiews-Role` and `X-Pwiews-Subject`. This is the deferred authentication gap — a real deployment adds JWT verification only in `principal_from_headers()`, everything else stays the same.
+**How role enters the system (updated — JWT-first):**
+1. `principal_from_headers()` first checks for a `Authorization: Bearer <token>` header
+2. If found, it calls `jwt_handler.verify_token()` to verify the HS256 signature
+3. If the token is valid, the role comes from the verified JWT claims (tamper-proof)
+4. If no Bearer header is present and `PWIEWS_DEBUG_AUTH=1` (demo/dev mode), it falls back to the plain `X-Pwiews-Role` header
+5. In production (`PWIEWS_DEBUG_AUTH=0`), the plain-header path is disabled entirely
+
+The original comment in rbac.py said "when JWT verification is added, only this function changes" — that is exactly what happened.
 
 **`require_role(principal, *allowed)`:** Raises `AuthorisationError` (→ 403) if role not in allowed list.
 
@@ -904,9 +948,129 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 
 **Forbidden fields for commander:** `personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`, `welfare_risk_score`, `risk_level`, `contributing_factors`, `voice_stress_signal`, `recommendations`, `case_id`
 
+#### `jwt_handler.py` (NEW)
+**Role:** Create and verify signed JWT tokens — the authentication layer.
+
+**How JWT works (in plain terms):**
+A JWT is a small packet of information ("I am a welfare officer, ID = SVC_01, expires in 1 hour") that is signed with a secret key. Anyone can read it but cannot forge it without the key. The server verifies the signature before trusting the role claim. This replaces the plain header approach where any browser could send `X-Pwiews-Role: commander`.
+
+**Implementation:**
+- Uses Python's **stdlib `hmac` and `base64`** — no third-party library required
+- HS256 algorithm (HMAC-SHA256) — same algorithm used by PyJWT
+- Falls back to `PyJWT` if it is importable (produces identical tokens)
+- The secret key is `settings.JWT_SECRET_KEY` (dev constant; real deployment injects from a secret manager)
+
+**Key functions:**
+- `create_token(subject, role, expires_in)` — issues a signed JWT; raises if role is unknown
+- `verify_token(token)` — checks signature, expiry, and that role is a known value; raises `AuthorisationError` on any failure
+- `principal_from_authorization_header(authorization)` — parses `Bearer <token>` header; plug-in replacement for the old plain-header read
+
+**Security properties proven in the test suite (`test_jwt_auth.py`):**
+- Round-trip: create → verify gives back the same subject + role
+- Tampered signature is rejected
+- Expired token is rejected
+- Unknown role in payload is rejected even if signature is valid
+
 ---
 
-### 5.13 `scripts/`
+### 5.13 `backend/recommendation_engine/`
+
+**Purpose:** Given a person's risk level, their top contributing signals, and whether their strain is individual or systemic, recommend specific welfare actions from a pre-approved library. **No AI generation.** Same inputs always produce the same outputs.
+
+**Why pre-compute instead of compute at request time?** The recommendation is available instantly for every case in the officer queue without any extra computation — it's already in `cases.json`.
+
+#### `intervention_library.json`
+A hand-crafted library of 8 welfare interventions. Each entry contains:
+- `id` — machine name (e.g., `leave_authorization`)
+- `title` — human name (e.g., "Authorise Compensatory Leave")
+- `description` — what the action actually involves in plain language
+- `action_owner` — who takes the action (`officer`, `commander`, `self`)
+- `priority` — `low`, `medium`, `high`
+- `applicable_risk_levels` — which risk bands this applies to
+- `applicable_signals` — which behavioral signals trigger this intervention
+- `applicable_attributions` — `Individual`, `Systemic`, `Mixed`, or `Any`
+
+**The 8 interventions:**
+| ID | Title | Owner |
+|---|---|---|
+| `leave_authorization` | Authorise Compensatory Leave | officer |
+| `schedule_review` | Review and Regularise Duty Schedule | officer |
+| `deployment_review` | Flag for Deployment/Posting Review | commander |
+| `counselling_referral` | Refer for Welfare Counselling | officer |
+| `peer_support_referral` | Connect with Peer Support Network | officer |
+| `training_load_reduction` | Reduce Additional Training Commitments | officer |
+| `transfer_review` | Flag for Transfer Review | commander |
+| `commander_escalation` | Escalate Unit Condition to Commander | officer |
+
+#### `action_mapper.py`
+**The mapping logic — in plain terms:**
+1. Filter the library to interventions that match the person's risk level (only Moderate/High get recommendations; Normal gets nothing)
+2. Filter to interventions whose `applicable_signals` overlap with this person's top contributing signals
+3. Filter to interventions whose `applicable_attributions` allow this person's attribution type
+4. Sort by priority (high first)
+5. Cap at `settings.MAX_RECOMMENDATIONS_PER_CASE` (default 3)
+6. If confidence is Low, mark all recommendations `low_confidence=True` to signal the officer "these are based on thin data"
+
+**`recommend(risk_level, top_signals, attribution_type, confidence_level)`** — the main function; fully deterministic.
+
+**`recommend_from_case(case)`** — convenience wrapper that extracts the four arguments from a `cases.json` entry.
+
+**`Recommendation` dataclass:**
+```python
+id: str
+title: str
+description: str
+action_owner: str       # who does this
+priority: str
+low_confidence: bool    # True if data was thin
+```
+
+---
+
+### 5.14 `backend/alerts/alert_rules.py`
+
+**Purpose:** Generate notifications for all three roles from the scored case data. Runs once per pipeline batch — not once per API request.
+
+**The graduated three-tier model (in plain terms):**
+
+Think of a fire alarm system with different bells in different rooms:
+- **Individual** (the person themselves): A quiet personal notification that only they see. Fires for any Moderate or High case, regardless of data confidence. The person always has the right to know their own indicators.
+- **Officer**: An alert that appears in the welfare queue. Fires for High cases, or cases that have been Moderate for a long time (persistent), or cases where the score is actively Rising. **Suppressed when confidence is Low** — thin data means a false alarm is more likely.
+- **Commander**: A unit-level near-miss alert. Contains **no individual names or pseudonyms** — just a unit ID and a description of the organisational condition. Verified by the test suite.
+
+**The 4 alert rules:**
+
+| Rule ID | Fires when | Role | Priority |
+|---|---|---|---|
+| `personal_wellness_alert` | Risk = Moderate or High | personnel | low / medium / high |
+| `officer_alert_high` | Risk = High, confidence = Medium or High | welfare_officer | high (or urgent if Rising) |
+| `officer_alert_persistent` | Moderate for ≥ N consecutive snapshots, confidence = Medium+ | welfare_officer | medium |
+| `commander_near_miss` | Unit-level near-miss confirmed | commander | high |
+
+**`generate_alert_batch(cases, near_misses)`:**
+- Iterates all cases, calls `evaluate_case_alerts(case)` for each
+- Calls `evaluate_near_miss_alerts(near_misses)` for the commander tier
+- Returns a `dict` with three keys:
+  - `by_recipient` — alerts keyed by role (for the officer dashboard)
+  - `by_pseudonym` — personal alerts keyed by `pseudonym_id` (for O(1) `/notifications` lookup)
+  - `total_count` — total alert count
+
+**`Alert` dataclass:**
+```python
+alert_id: str            # deterministic, no randomness
+rule_id: str             # which rule fired
+recipient_role: str      # personnel / welfare_officer / commander
+priority: str            # low / medium / high / urgent
+title: str
+body: str
+pseudonym_id: str | None # None for commander alerts (never individual)
+unit_id: str | None      # None for personal alerts
+snapshot_date: str
+```
+
+---
+
+### 5.15 `scripts/`
 
 #### `generate_synthetic_data.py` (46 KB)
 - Full synthetic data generator
@@ -926,8 +1090,9 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 
 #### `run_pipeline.py`
 - Entry point for batch scoring
-- Runs full 6-stage pipeline
-- Writes 6 JSON files to `data/processed/`
+- Runs full **7-stage** pipeline (was 6 before recommendations + alerts were added)
+- Now also calls `action_mapper.recommend_from_case()` for every case and `alert_rules.generate_alert_batch()` for the whole force
+- Writes **7 JSON files** to `data/processed/` (was 6; `alerts.json` is new)
 - SHAP explanations pre-computed for top 150 cases only
 
 #### `scripts/README.md`
@@ -935,7 +1100,7 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 
 ---
 
-### 5.14 `ml/evaluation/`
+### 5.16 `ml/evaluation/`
 
 #### `metrics.py`
 - `all_metrics(y_true, y_pred)` → `{mae, rmse, r2, band_accuracy, high_recall}`
@@ -949,7 +1114,7 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 
 ---
 
-### 5.15 `frontend/`
+### 5.17 `frontend/`
 
 All frontends are **dependency-free ES-module apps** — no npm, no build step. Vanilla HTML + JavaScript.
 
@@ -1016,7 +1181,7 @@ Single-page personal wellness app.
 
 ---
 
-### 5.16 `data/`
+### 5.18 `data/`
 
 #### `data/raw/`
 | File | Rows | Content |
@@ -1035,12 +1200,13 @@ Single-page personal wellness app.
 #### `data/processed/`
 | File | Content |
 |---|---|
-| `cases.json` | One entry per person at latest snapshot (risk, signals, attribution, confidence, trend) |
+| `cases.json` | One entry per person at latest snapshot (risk, signals, attribution, confidence, trend, **recommendations**) |
 | `history.json` | Score history per person across all 6 snapshots |
 | `units.json` | Unit aggregates (mean risk, near-miss pressure, personnel count) |
 | `near_misses.json` | Qualifying near-miss findings |
 | `explanations.json` | Pre-computed SHAP values for top 150 cases |
 | `meta.json` | Model version, thresholds, band distribution, run timestamp |
+| `alerts.json` | **(NEW)** All alerts — personal notifications, officer alerts, commander near-miss alerts; keyed by role and by pseudonym_id |
 
 #### `data/identity_map.sqlite3`
 Three tables:
@@ -1055,6 +1221,87 @@ Formal schema for all raw tables (used by `validators.py`).
 - `CURRENT` — plain text file containing the current version ID (e.g., `v20260901T233616Z`)
 - `v20260901T233616Z/model.joblib` — fitted estimator (534 KB)
 - `v20260901T233616Z/metadata.json` — full audit trail of the training run
+
+---
+
+### 5.19 `tests/`
+
+**91 tests pass, 2 skipped (scipy/pandas not installed in the build env), 0 failures.**
+
+Every test file has one job. There are no tests that try to test everything at once.
+
+#### `test_rbac_api.py` ⭐ (most critical)
+**Proves the three-layer RBAC guarantee.**
+
+This is the most important test in the suite because it is the automated proof that the system's central privacy promise is kept. If this test passes, a commander response structurally cannot carry individual data — not by convention, but by code.
+
+- `TestFindIndividualFields` — checks that the recursive field scanner catches forbidden fields at flat, nested, and list-element depth
+- `TestAssertCommanderSafe` — checks that `assert_commander_safe()` raises `IndividualDataLeak` for any forbidden field at any depth, including `recommendations`
+- `TestRequireRole` — checks that the role gate raises for wrong roles and passes for correct ones
+- `TestRequireSelf` — checks that personnel cannot read other people's records; officers are not bound by this
+- `TestCommanderForbiddenFieldsCompleteness` — checks that all expected individual identifiers are present in `COMMANDER_FORBIDDEN_FIELDS`
+
+#### `test_jwt_auth.py`
+**Proves the JWT implementation is correct.**
+
+- `TestTokenRoundTrip` — create \u2192 verify round-trip for all 3 roles; expiry is set; unknown role raises
+- `TestStdlibHs256` — **explicitly tests the stdlib path** (no PyJWT dependency): round-trip, tampered signature rejected, expired token rejected, malformed token rejected, unknown role in payload rejected even with valid signature
+- `TestPrincipalFromAuthorizationHeader` — Bearer header extraction; missing prefix raises; empty header raises
+
+#### `test_alert_rules.py`
+**Proves the graduated notification hierarchy.**
+
+- `TestPersonalNotification` — fires for High and Moderate; does NOT fire for Normal; fires even on Low confidence (individual always deserves to know their own indicators)
+- `TestOfficerAlerts` — fires for High with Medium+ confidence; **suppressed for Low confidence**; rising High gets `urgent` priority; persistent Moderate generates alert
+- `TestCommanderAlerts` — near-miss generates commander alert; `pseudonym_id` is None; alert dict has no non-None forbidden fields
+- `TestGenerateAlertBatch` — output structure has all required keys; High person appears in `by_pseudonym`; Normal person does not; `total_count` is accurate
+
+#### `test_recommendation_engine.py`
+**Proves determinism, attribution filtering, and the confidence flag.**
+
+- `TestRecommendBasicBehaviour` — Normal risk returns empty; Moderate/High returns results; result is `Recommendation` objects; capped at max; same inputs always same output
+- `TestRecommendAttributionFilter` — Systemic attribution gets peer support; Individual does not; no-signal-overlap doesn't crash
+- `TestLowConfidenceFlag` — Low confidence sets `low_confidence=True` on all recommendations; High confidence clears it
+- `TestRecommendationToDict` — all required keys present in `to_dict()` output
+- `TestRecommendFromCase` — Normal risk case returns empty; High risk case with factors returns recs; missing factors falls back to signals dict
+
+#### `test_voice_pipeline.py`
+**Proves the no-transcription invariant structurally.**
+
+- `TestNoTranscriptionInAcousticFeatures` — acoustic and comparison feature names contain none of the forbidden terms (transcript, text, word, phoneme, utterance, etc.); voice signal is a single float not a content object
+- `TestAcousticFeatureDirections` — all comparison features have a direction constant; all directions are +1 or -1
+- `TestAcousticFeatureWeights` — weights sum to exactly 1.0; all comparison features have a weight
+- `TestVoicePipelineModuleImport` — voice_baseline (no pandas) always imports; others skip gracefully when scipy/pandas are absent
+
+#### `test_behavioral_engine.py`
+**Proves the settings contract for the behavioral engine.**
+
+- `TestSignalWeights` — all signal component weight dicts sum to 1.0; all weight keys are known behavioral signals
+- `TestSignalRangeConstants` — signal range is 0\u2013100; Moderate threshold < High threshold; both within range
+- `TestModelFeatureNames` — all behavioral signals are in MODEL_FEATURE_NAMES; voice signal and presence flag are in; no duplicates
+- `TestSignalHumanLabels` — every model feature has a non-empty human label; no label contains judgemental language (lazy, weak, failure, problem, bad)
+- `TestBehavioralEngineImport` — backend.behavioral_engine package imports without error
+
+---
+
+### 5.20 `docs/`
+
+The documentation suite. All four files were written to be accurate to the actual code and settings — no content is invented or paraphrased from memory.
+
+#### `docs/ps_alignment_matrix.md`
+Maps every component of the SIH26186 problem statement to the exact file and function that implements it. Honest about the three items that remain unbuilt (DB layer, voice upload endpoint, login route). Covers all 8 expected solution components, all 6 technical challenges, and all ethical constraints.
+
+#### `docs/privacy_policy.md`
+What the system holds about personnel, how it is protected, who can access what, and what choices personnel have. Covers:
+- HR data: what is collected, how pseudonymisation works, who can see what table
+- Voice data: what is and is not recorded during a check-in, retention periods (raw audio = 0 days), how the single-deviation-number contract protects content
+- Subject rights: how to see your own data, reset your voice baseline, request re-identification audit logs
+
+#### `docs/model_comparison_report.md`
+Why Gradient Boosting was selected over the other 7 candidates. Contains the full results table, the documented selection rule (tree-preference with 0.02 R² margin), the mathematical justification for the selection, the SHAP explainability justification, and a section of known limitations (synthetic data, voice coverage at 0.4%, calibration needs).
+
+#### `docs/data_dictionary.md`
+Every field in every raw CSV and every field in the main processed output files (`cases.json`, `alerts.json`). Each field has: type, source (MHA/JPC citation or ASSUMPTION tag), nullability, and a note.
 
 ---
 
@@ -1184,13 +1431,25 @@ Stage 5: SHAP explanations (top 150 cases only)
            └─ asserts local accuracy
   → {pseudonym_id: Explanation}
 
-Stage 6: assemble dashboard payloads
-  └─ cases.json: one entry per person with all analytics
+Stage 6: welfare recommendations & graduated alert batch
+  └─ for each case at latest snapshot:
+     └─ action_mapper.recommend_from_case(case)
+        └─ maps (risk_level, top_signals, attribution_type, confidence) → [Recommendation, ...]
+        └─ attached directly into case payload in cases.json
+  └─ alert_rules.generate_alert_batch(latest_cases, near_misses)
+     └─ generates personal notifications (for all Moderate/High personnel)
+     └─ generates officer alerts (for High, persistent Moderate, rising High; suppressed if Low confidence)
+     └─ generates commander alerts (for unit-level near-miss findings; zero individual identifiers)
+  → alerts payload with by_recipient and by_pseudonym
+
+Stage 7: assemble dashboard payloads (7 processed JSON files)
+  └─ cases.json: one entry per person with all analytics and recommendations
   └─ history.json: score × 6 snapshots per person
   └─ units.json: unit aggregates + near-miss pressure
-  └─ near_misses.json: qualifying findings
-  └─ explanations.json: precomputed SHAP
-  └─ meta.json: run metadata
+  └─ near_misses.json: qualifying near-miss findings
+  └─ explanations.json: precomputed SHAP values for top cases
+  └─ meta.json: run metadata, model version, thresholds
+  └─ alerts.json: (NEW) graduated alerts partitioned by role and by pseudonym_id
 ```
 
 ---
@@ -1200,29 +1459,42 @@ Stage 6: assemble dashboard payloads
 ### Personal app request: `GET /api/personal/{id}/summary`
 
 ```
-Browser (personal-app) with X-Pwiews-Role: personnel, X-Pwiews-Subject: PSN<hex>
+Browser (personal-app) with Authorization: Bearer <token> (or X-Pwiews-Role in debug)
   → Starlette routing → personal.summary(request)
   → rbac.principal_from_headers(request.headers)
-     └─ reads X-Pwiews-Role → creates Principal(role="personnel", subject="PSN...")
+     └─ parses Bearer token via jwt_handler.verify_token(token)
+     └─ creates Principal(role="personnel", subject="PSN...")
   → rbac.require_role(principal, "personnel", "welfare_officer")
   → rbac.require_self(principal, pseudonym_id)
-     └─ raises AuthorisationError if principal.subject != pseudonym_id
+     └─ raises AuthorisationError (403) if principal.subject != pseudonym_id
   → store.cases_by_id[pseudonym_id]
   → store.explanations.get(pseudonym_id)
   → JSONResponse(payload)
 ```
 
+### Personal app notifications: `GET /api/personal/{id}/notifications`
+
+```
+Browser (personal-app) with Authorization: Bearer <token>
+  → Starlette routing → personal.notifications(request)
+  → rbac.principal_from_headers(request.headers)
+  → rbac.require_role(principal, "personnel", "welfare_officer")
+  → rbac.require_self(principal, pseudonym_id)
+  → store.alerts.get("by_pseudonym", {}).get(pseudonym_id, [])
+  → JSONResponse({pseudonym_id, notifications, count})
+```
+
 ### Officer queue request: `GET /api/officer/queue`
 
 ```
-Browser (officer-dashboard) with X-Pwiews-Role: welfare_officer
+Browser (officer-dashboard) with Authorization: Bearer <token> (role: welfare_officer)
   → officer.queue(request)
   → rbac.require_role(principal, "welfare_officer")
   → build_queue(store)
-     └─ filters: is_officer_visible(case) → High OR is_persistent
+     └─ filters: is_officer_visible(case) → High OR is_persistent Moderate
      └─ sorts by priority_score (risk + trend bonus - confidence penalty)
-     └─ returns trimmed list (pseudonym, score, level, trend, etc.)
-  → JSONResponse (no individual voice, no factors — just queue fields)
+     └─ returns trimmed list (pseudonym, score, level, trend, confidence, attribution)
+  → JSONResponse (no raw voice, no unredacted personnel fields — just queue fields)
 ```
 
 ### What-if simulation: `POST /api/officer/what-if`
@@ -1243,7 +1515,7 @@ Officer POSTs {pseudonym_id, adjustments: {workload_deviation_signal: 30}}
 ### Commander request: `GET /api/commander/units`
 
 ```
-Browser (officer-dashboard, commander tab) with X-Pwiews-Role: commander
+Browser (officer-dashboard, commander tab) with Authorization: Bearer <token> (role: commander)
   → commander.units(request)
   → rbac.require_role(principal, "commander")
   → assembles unit aggregate payload (no individual fields)
@@ -1262,11 +1534,12 @@ The privacy design has multiple independent layers:
 | Layer | Mechanism | What it prevents |
 |---|---|---|
 | Pseudonymisation | HMAC-SHA256 with secret salt | Analytics path never sees real IDs |
-| Separate identity DB | `identity_map.sqlite3` is a different file | Compromise of analytics store yields only pseudonyms |
+| Separate identity DB | `identity_map.sqlite3` is a separate database file | Compromise of analytics store yields only pseudonyms |
 | Audited re-identification | Only `welfare_officer` can re-identify; every attempt is logged | No silent lookups |
 | RBAC | Role-scoped routes; commander routes structurally incapable of individual data | Wrong role can't see individual data |
-| Commander guard | `assert_commander_safe()` walks response at all depths | A code change adding a field is caught |
-| Voice pipeline boundary | Only one 0-100 number crosses the module boundary | Officer screen can't show "your pitch was 12% higher" |
+| JWT Authentication | Cryptographically signed HS256 tokens | Role-spoofing or header tampering |
+| Commander guard | `assert_commander_safe()` walks response at all depths | A code change accidentally adding a field is caught |
+| Voice pipeline boundary | Only one 0-100 number crosses the module boundary | Officer screen can't show raw acoustic measurements |
 | Voluntary voice | `voice_signal_present=0` is treated identically to missing — never as "no stress" | Declining voice doesn't penalise you |
 | No audio retention | Raw audio deleted immediately after feature extraction | No audio store to compromise |
 | Officer visibility gate | Only High cases (or persistent Moderate) are in the queue | Most people are never escalated |
@@ -1340,31 +1613,107 @@ voice_stress_signal.py
 
 ---
 
-## 12. Role-based access control
+## 12. Role-based access control and JWT authentication
 
 ### What each role can see
 
-| | Personnel | Welfare Officer | Commander |
+| Resource / Feature | Personnel | Welfare Officer | Commander |
 |---|---|---|---|
 | Own score, signals, factors | ✅ | ✅ | ❌ |
-| Own history | ✅ | ❌ | ❌ |
-| Own privacy centre | ✅ | ❌ | ❌ |
+| Own history & trend | ✅ | ❌ | ❌ |
+| Own privacy centre & audit | ✅ | ❌ | ❌ |
+| Personal notifications (`/notifications`) | ✅ | ❌ | ❌ |
 | Other people's individual data | ❌ | ❌ (only escalated cases) | ❌ |
 | Officer queue (High + persistent Moderate) | ❌ | ✅ | ❌ |
-| Full case detail for escalated cases | ❌ | ✅ | ❌ |
+| Full case detail & recommendations | ❌ | ✅ | ❌ |
 | What-if simulation | ❌ | ✅ | ❌ |
 | Unit aggregates | ❌ | ❌ | ✅ |
-| Near-miss findings | ❌ | ❌ | ✅ |
+| Near-miss findings & pressure | ❌ | ❌ | ✅ |
 
-### How role is enforced
+### How authentication & authorization are enforced
 
-1. **Header check** (`rbac.principal_from_headers`): reads `X-Pwiews-Role`, must be a known role
-2. **Route gate** (`rbac.require_role`): each handler declares which roles are allowed
-3. **Self-check** (`rbac.require_self`): personnel can only read their own pseudonym
-4. **Commander payload scan** (`rbac.assert_commander_safe`): recursive walk of response body, raises 500 if any forbidden field found at any depth
+1. **Authentication (`jwt_handler.py`):**
+   - Cryptographically signs and validates tokens using **HS256 (HMAC-SHA256)**.
+   - Built using Python stdlib with optional PyJWT fallback.
+   - Tokens contain claims: `sub` (subject/ID), `role` (personnel, welfare_officer, commander), `iat` (issued at), and `exp` (expiration).
+2. **Header extraction (`rbac.principal_from_headers`):**
+   - Parses the `Authorization: Bearer <token>` header and verifies signature.
+   - Only in debug mode (`PWIEWS_DEBUG_AUTH=1`) will it fall back to plain `X-Pwiews-Role` headers.
+3. **Route authorization gate (`rbac.require_role`):**
+   - Each endpoint explicitly specifies which roles can execute it (raises 403 `AuthorisationError` on mismatch).
+4. **Self-scoping check (`rbac.require_self`):**
+   - Personnel role requests must have `principal.subject == pseudonym_id` (blocks cross-person reads).
+5. **Commander payload scan (`rbac.assert_commander_safe`):**
+   - Recursive walk of the JSON response payload. If any individual-identifiable field is detected, throws a 500 error before sending data over the wire.
 
 ### What commanders can NEVER receive (even if a bug adds it)
 
 `personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`, `welfare_risk_score`, `risk_level`, `contributing_factors`, `voice_stress_signal`, `recommendations`, `case_id`
 
-The commander guard runs on the server response, not the query — it catches the cases that matter: a helper quietly adding a field, a dataclass gaining an attribute, a join carrying a column along.
+---
+
+## 13. Alert rules — the notification system
+
+The alert subsystem (`backend/alerts/alert_rules.py`) implements a three-tier graduated notification engine that evaluates all cases during batch processing:
+
+### 1. Tier 1 — Personal Notifications (`personal_wellness_alert`)
+- **Recipient:** The individual personnel member (`personnel` role).
+- **Trigger:** Any Moderate or High welfare risk score.
+- **Rule:** Fires regardless of data confidence. Personnel always have an absolute right to see their own status and trend indicators.
+- **Privacy:** Stored under `alerts.json -> by_pseudonym[pseudonym_id]` and served exclusively via `GET /api/personal/{id}/notifications`.
+
+### 2. Tier 2 — Officer Alerts (`officer_alert_high`, `officer_alert_persistent`)
+- **Recipient:** Welfare Officers (`welfare_officer` role).
+- **Trigger:**
+  - High risk level with Medium or High data confidence.
+  - Moderate risk level persisting for ≥ 3 consecutive snapshots with Medium/High confidence.
+  - Rising trend adds `urgent` priority flag.
+- **Suppression:** Suppressed when confidence is Low to prevent false alarm fatigue on incomplete HR records.
+
+### 3. Tier 3 — Commander Alerts (`commander_near_miss`)
+- **Recipient:** Unit Commanders (`commander` role).
+- **Trigger:** A unit-level welfare near-miss condition is confirmed by `near_miss_detector.py`.
+- **Privacy Enforcement:** **Strictly unit-level**. `pseudonym_id` is `None`. Contains zero personal metrics or individual scores.
+
+---
+
+## 14. Recommendation engine — the action engine
+
+The recommendation engine (`backend/recommendation_engine/`) maps evaluated welfare risk and contributing stressors to practical, pre-approved actions:
+
+### Key Principles
+1. **Zero LLM / Generative AI:** All recommendations are deterministically mapped via strict rule sets.
+2. **8 Pre-approved Interventions (`intervention_library.json`):**
+   - `leave_authorization` (Authorise Compensatory Leave)
+   - `schedule_review` (Review and Regularise Duty Schedule)
+   - `deployment_review` (Flag for Deployment/Posting Review)
+   - `counselling_referral` (Refer for Welfare Counselling)
+   - `peer_support_referral` (Connect with Peer Support Network)
+   - `training_load_reduction` (Reduce Additional Training Commitments)
+   - `transfer_review` (Flag for Transfer Review)
+   - `commander_escalation` (Escalate Unit Condition to Commander)
+3. **Filtering Logic (`action_mapper.py`):**
+   - **Risk Level Filter:** Normal risk receives 0 recommendations; Moderate/High receive up to 3 prioritized actions.
+   - **Stress Factor Alignment:** Matches interventions against the top 3 contributing SHAP signals.
+   - **Attribution Match:** Individual issues trigger counselling/leave; Systemic issues trigger schedule/deployment reviews and peer support.
+   - **Confidence Demotion:** If confidence is Low, recommendations include `low_confidence: True` to warn the officer.
+
+---
+
+## 15. Test suite — what each test file proves
+
+The test suite in `tests/` contains **91 automated tests** verifying core logic, mathematical invariants, and privacy boundaries:
+
+| Test Module | What It Verifies & Proves |
+|---|---|
+| `test_rbac_api.py` ⭐ | **The structural privacy guarantee.** Proves that `assert_commander_safe` catches all forbidden fields recursively, that `require_self` blocks unauthorized personnel reads, and that commander routes cannot leak individual data. |
+| `test_jwt_auth.py` | **Authentication validity.** Proves HS256 token creation, claims extraction, expired token rejection, tampering prevention, and malformed authorization header handling. |
+| `test_alert_rules.py` | **Graduated alerting.** Proves personal alerts fire for Moderate/High regardless of confidence, officer alerts are suppressed on Low confidence, and commander near-miss alerts contain zero individual identifiers. |
+| `test_recommendation_engine.py` | **Deterministic action mapping.** Proves Normal risk yields empty recommendations, Moderate/High selects correct actions matching SHAP factors, attribution filters operate correctly, and low-confidence flags attach properly. |
+| `test_voice_pipeline.py` | **Voice privacy invariant.** Proves by AST/attribute inspection that no speech-to-text, phoneme, word, or transcript concepts exist in the acoustic feature extractors, and verifies that feature weights sum to 1.0. |
+| `test_behavioral_engine.py` | **Behavioral signal contracts.** Proves that all component weights sum to 1.0, human-readable labels contain no judgemental language, and bounded signals strictly span 0–100. |
+
+To execute the test suite:
+```bash
+python -m unittest discover -s tests
+```

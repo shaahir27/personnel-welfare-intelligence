@@ -30,18 +30,27 @@ authorisation model or the route boundaries would change.
 
 SCOPE OF THIS BUILD
 -------------------
-Authentication is not implemented. The acting role arrives in a header rather
-than in a verified token, which means this API must not be exposed outside a
-trusted network as it stands. That gap is real and is stated rather than
-papered over.
+Authentication is implemented via signed JWTs (see backend/auth/jwt_handler.py).
+The acting role and subject arrive in a verified `Authorization: Bearer <token>`
+header -- `backend.auth.rbac.principal_from_headers()` checks for that header
+first and rejects a missing/invalid one. The one remaining gap: there is no
+`POST /api/auth/login` route to issue tokens against stored credentials,
+because this build has no credential store to validate against (see STATUS.md).
+The plain `X-Pwiews-Role` / `X-Pwiews-Subject` header path still exists as a
+fallback for when no Bearer token is sent, gated by `PWIEWS_DEBUG_AUTH`
+(env var `backend/auth/jwt_handler.py:DEBUG_ALLOW_HEADER_AUTH`, which
+**defaults to enabled** so the demo frontends work without a login route).
+Set `PWIEWS_DEBUG_AUTH=0` before exposing this outside a trusted network --
+that is the one flag standing between this build and header-spoofable auth.
 
-What *is* implemented is the authorisation model, because it carries the
-privacy guarantee: role-scoped routes, personnel restricted to their own
-record, officer visibility gated by the escalation rule, and commander
-responses structurally incapable of carrying individual data. An
-authentication bug lets the wrong person in as a commander; an authorisation
-bug lets a commander see individuals. The second is the one that would break
-the system's promise to the people it monitors, so it is the one built first.
+The authorisation model is what carries the privacy guarantee on top of that:
+role-scoped routes, personnel restricted to their own record, officer
+visibility gated by the escalation rule, and commander responses structurally
+incapable of carrying individual data. An authentication bug lets the wrong
+person in as a commander; an authorisation bug lets a commander see
+individuals. The second is the one that would break the system's promise to
+the people it monitors, so it was built first and is enforced redundantly
+(see `rbac.assert_commander_safe`).
 """
 
 from __future__ import annotations

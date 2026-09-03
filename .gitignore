@@ -17,3 +17,7 @@ htmlcov/
 # Self-assessment answers written by the running API. Runtime state, and
 # somebody's own words — not build output, and not ours to publish.
 data/responses/
+
+# Agent/AI tooling skill packs. Vendored third-party content, not product code
+# and not ours to redistribute. Kept locally, out of the repo.
+.agents/

@@ -55,13 +55,13 @@ importable.
 | **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split. Gradient Boosting selected (R² 0.729, MAE 5.46). Exact Shapley by full coalition enumeration, additivity asserted on every call, ~0.2 s per case. Versioned registry with metadata. |
 | **G** Post-model analytics | `backend/post_model_analytics/` | ✅ Risk bands, trend/persistence, data-completeness confidence (honestly labelled a heuristic), individual-vs-systemic attribution with small-cell suppression. |
 | **H** Near-miss detection | `backend/near_miss/` | ✅ Unit-level, independent of individual scores. One live finding on the current corpus (U016). |
-| **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json` by `run_pipeline.py`. |
-| **J** Alert rules | `backend/alerts/alert_rules.py` | ✅ 4 graduated rules: personal notification (always), officer alert (High, persistent Moderate, rising High), commander near-miss alert. Low-confidence suppression for officer/commander alerts. Written to `alerts.json`. |
-| **K** JWT authentication | `backend/auth/jwt_handler.py`, `backend/auth/rbac.py` | ✅ HS256 via stdlib hmac+base64; falls back to PyJWT when importable. `principal_from_headers()` tries Bearer token first, plain-header in DEBUG mode only. |
-| **L** API (minimal) | `backend/api/` | ✅ 12 endpoints serving both frontends from precomputed output. Role-scoped, commander payloads guarded. New: `/api/personal/{id}/notifications`. |
+| **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json`, returned by `/api/officer/case/{id}`, rendered on the case detail screen. 630 of 800 cases carry recommendations. |
+| **J** Alert rules | `backend/alerts/alert_rules.py` | ✅ 4 graduated rules: personal notification (always), officer alert (High, persistent Moderate, rising High), commander near-miss alert. Low-confidence suppression for officer/commander alerts. Written to `alerts.json` (1,320 alerts); personal notifications render in the personal app, officer alerts on the case detail screen. |
+| **K** JWT authentication | `backend/auth/` | ✅ HS256 via stdlib hmac+base64, PyJWT when importable. `POST /api/auth/login` issues tokens against PBKDF2 credential hashes; both frontends sign in and send `Authorization: Bearer`. Plain role header requires `PWIEWS_DEBUG_AUTH=1` and is off by default. |
+| **L** API | `backend/api/` | ✅ 14 endpoints serving both frontends from precomputed output. Role-scoped, commander payloads guarded. `POST /api/auth/login` and `POST /api/personal/{id}/check-in` are the only write paths. |
 | **M** Both frontends | `frontend/` | ✅ Personal app (4 screens) and officer dashboard (4 screens), both wired to live pipeline output, verified rendering with no console errors. |
-| **N** Docs suite | `docs/` | ✅ `data_dictionary.md`, `ps_alignment_matrix.md`, `privacy_policy.md`, `model_comparison_report.md` — all written. |
-| **O** Test suite | `tests/` | ✅ 91 tests, 0 failures, 2 skipped (scipy/pandas not installed in this env). RBAC leak-proof test, JWT auth tests, alert rules tests, recommendation engine tests, voice pipeline invariant tests, behavioral engine tests. |
+| **N** Docs suite | `docs/` | ✅ `data_dictionary.md`, `ps_alignment_matrix.md`, `privacy_policy.md`, `model_comparison_report.md`, plus per-module READMEs. |
+| **O** Test suite | `tests/` | ✅ 127 tests, 0 failures. RBAC leak-proof test, end-to-end route/auth tests, JWT auth tests, alert rules tests, recommendation engine tests, check-in store tests, voice pipeline invariant tests, behavioral engine tests. |
 
 **Model comparison result** (held-out, split by person, 640 train / 160 test people):
 
@@ -84,9 +84,36 @@ Full results in `ml/evaluation/model_comparison_results.json`.
 
 | Item | State |
 | --- | --- |
-| **DB layer** | `backend/db/` is an empty package. The API serves precomputed JSON from `data/processed/`; the only SQLite in use is the pseudonym vault. |
+| **DB layer** | `backend/db/` is an empty package. The API serves precomputed JSON from `data/processed/`; the only SQLite in use is the pseudonym vault. Self-assessment answers go to an append-only JSONL file (`backend/api/checkin_store.py`), which is the one module a real DB layer would replace. |
 | Voice upload endpoint | The acoustic pipeline runs on the batch corpus. There is no in-app audio upload route, and the record button is disabled and labelled as such. |
-| `POST /api/auth/login` route | `jwt_handler.py` exists and issues/verifies tokens. A login route (POST body → token) was not added because there are no stored credentials to validate against in this build. Demo still uses the header path. |
+| Intervention outcome tracking | Recommendations are shown; nothing records which one was taken or whether it helped. Without that there is no way to learn which interventions work, and no feedback loop of any kind. |
+| Token revocation | A token is valid until it expires. There is no way to end a session early. |
+
+---
+
+## Defects found and fixed after the first build
+
+Recorded because each one was invisible from the module it lived in, and the
+pattern is worth keeping in view.
+
+| Defect | Why it mattered | Why the tests missed it |
+| --- | --- | --- |
+| `GET /api/personal/{id}/notifications` called `require_self` but not `require_role`. | `require_self` only constrains a *personnel* principal and returns silently for every other role, so a **commander could read a named individual's alerts** — the exact disclosure the rest of the system is built to prevent. | Every test was against `rbac.py`, which was correct. Nothing tested whether a route called it. |
+| `by_pseudonym` in the alert batch was built from "does this alert carry a pseudonym_id". | Officer alerts carry the pseudonym of the person they are about, so the individual's own notification feed **told them their welfare officer had been notified** — the opposite of the module's stated graduation principle. | The existing test asserted the person appeared in `by_pseudonym`, not what was in it. |
+| `recommend_from_case` read `f.get("signal")`; the explainer writes `signal_name`. | Every factor name resolved to `""`, and a list of empty strings is truthy, so the signals fallback never ran. The **explained cases got no recommendations at all** — and the explained cases are the highest-scoring ones in the queue. | The test built its factor dicts by hand with the wrong key, so it tested the wrong schema. It now builds them with `ContributingFactor.to_dict()`. |
+| `data/processed/*.json` was committed from a run predating components I and J. | A fresh clone served **zero recommendations, zero alerts and zero explanations** until the pipeline was re-run. | Nothing asserted anything about the committed payloads. `test_api_routes.py` now does. |
+| Explanations were precomputed for the top 150 cases; 624 are officer-visible. | Three quarters of the queue, and every individual outside the top 150 looking at their own record, saw no factor breakdown. The docstring said the rest were explained on demand; no such path existed. | No test asserted coverage. |
+| `PWIEWS_DEBUG_AUTH` defaulted to enabled. | Any caller could claim any role by sending a header. | No test asserted the default. |
+| `data/identity_map.sqlite3` was tracked despite `*.sqlite3` in `.gitignore`. | The file holds the pseudonym→`personnel_id` map **and** the HMAC salt, so committing it undid the pseudonymisation for anyone who cloned the repo. Synthetic data, so nobody was exposed — but the claim in the README was not true of the repository as published. | Not a code path. |
+
+### On what the test suite now covers
+
+The suite used to test the authorisation *functions* thoroughly and the
+*routes* not at all. Two of the defects above lived in exactly that gap: the
+functions were correct throughout, but one route did not call them and one
+header path went around them. `tests/test_api_routes.py` drives the real ASGI
+app over HTTP — sign in, call the route, check the status code — and is where
+route-level guarantees now belong.
 
 ### On the RBAC guarantee & test suite
 

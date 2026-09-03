@@ -203,7 +203,7 @@ These four commands, run in order, get the system fully operational.
 7. Computes trends across snapshots
 8. Computes unit aggregates
 9. Detects welfare near-misses
-10. Pre-computes SHAP explanations for the top 150 cases
+10. Pre-computes SHAP explanations for every case at the latest snapshot
 11. Generates **recommendations** for every case — pre-computed, not done at request time
 12. Generates **alert batch** — personal notifications, officer queue alerts, commander near-miss alerts
 13. Writes **7 JSON files** to `data/processed/`:
@@ -310,7 +310,7 @@ SCORING (scripts/run_pipeline.py):
      ├── individual_vs_systemic.compute_unit_aggregates() ← mean risk per unit
      ├── near_miss_detector.detect_near_misses() ← unit-level condition detection
      │
-     └── [top 150 cases] → scorer.explain_row() → exact Shapley values
+     └── [all 800 cases] → scorer.explain_row() → exact Shapley values
          └── writes data/processed/*.json
 
 API (backend/api/main.py):
@@ -910,6 +910,22 @@ Every handler calls `rbac.require_self(principal, pseudonym_id)` — a personnel
 
 Every response passes through `rbac.assert_commander_safe()` which walks the entire response structure and raises `IndividualDataLeak` if any forbidden field appears anywhere at any depth.
 
+#### `routes/auth.py`
+**Role:** The login route — `POST /api/auth/login`.
+
+- Takes `{username, password}` and optionally `{subject}`
+- Checks the credentials via `backend/auth/credentials.py`
+- Returns `{token, token_type, role, subject, expires_in}`
+- `subject` is accepted **only** from an account whose `may_choose_subject` is set (the demo personnel account). Any other account sending one is refused rather than having it quietly ignored
+
+#### `checkin_store.py`
+**Role:** Store the answers a person gives on the check-in screen.
+
+- Append-only JSONL at `data/responses/check_in_responses.jsonl`, not in `data/processed/` — the pipeline rewrites that directory wholesale and would delete them
+- Validates rather than repairs: an out-of-range value or an oversized free-text answer is rejected, and a submission with one bad answer stores none of it
+- `submissions_for()` filters by pseudonym, so a read only ever returns the caller's own answers
+- **Answers are not a model input.** The eight behavioral signals come from HR records alone, so answering or not answering cannot move anybody's score — which is what makes "entirely optional" on that screen literally true
+
 #### `wellness_questions.json`
 - Fixed question bank keyed by behavioral signal name
 - 2 general questions + questions per signal (up to 3 tailored to top signals)
@@ -931,10 +947,12 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 1. `principal_from_headers()` first checks for a `Authorization: Bearer <token>` header
 2. If found, it calls `jwt_handler.verify_token()` to verify the HS256 signature
 3. If the token is valid, the role comes from the verified JWT claims (tamper-proof)
-4. If no Bearer header is present and `PWIEWS_DEBUG_AUTH=1` (demo/dev mode), it falls back to the plain `X-Pwiews-Role` header
-5. In production (`PWIEWS_DEBUG_AUTH=0`), the plain-header path is disabled entirely
+4. If no Bearer header is present and `PWIEWS_DEBUG_AUTH=1` (debug only), it falls back to the plain `X-Pwiews-Role` header
+5. `PWIEWS_DEBUG_AUTH` **defaults to 0**, so the plain-header path is disabled unless somebody deliberately turns it on
 
 The original comment in rbac.py said "when JWT verification is added, only this function changes" — that is exactly what happened.
+
+That default used to be 1, because the frontends had no way to obtain a token: `jwt_handler.py` could verify tokens nobody was issuing, so both apps went on asserting their own role in a header anybody could type. `POST /api/auth/login` is what removed the reason, and the default moved with it.
 
 **`require_role(principal, *allowed)`:** Raises `AuthorisationError` (→ 403) if role not in allowed list.
 
@@ -971,24 +989,36 @@ A JWT is a small packet of information ("I am a welfare officer, ID = SVC_01, ex
 - Expired token is rejected
 - Unknown role in payload is rejected even if signature is valid
 
+#### `credentials.py` + `demo_accounts.json`
+**Role:** The other half of authentication — checking a password, so that a token can be issued at all.
+
+- PBKDF2-HMAC-SHA256, 200,000 iterations, a distinct random salt per account, compared with `hmac.compare_digest`
+- An unknown username does the same PBKDF2 work as a known one before failing, so response timing does not reveal which accounts exist
+- "No such user" and "wrong password" return the same message, for the same reason
+- Three accounts: `officer`, `commander`, `personnel`. The passwords are published in `README.md` — this guards a synthetic corpus and a reviewer has to be able to sign in
+- The personnel account carries `may_choose_subject: true` and names the pseudonym it is acting as at login. That flag lives on the account record rather than inside a route handler, so it is greppable and false for everything else
+
+A deployment replaces these two files together, behind `authenticate()`. No route changes. See `backend/auth/README.md`.
+
 ---
 
 ### 5.13 `backend/recommendation_engine/`
 
 **Purpose:** Given a person's risk level, their top contributing signals, and whether their strain is individual or systemic, recommend specific welfare actions from a pre-approved library. **No AI generation.** Same inputs always produce the same outputs.
 
-**Why pre-compute instead of compute at request time?** The recommendation is available instantly for every case in the officer queue without any extra computation — it's already in `cases.json`.
+**Why pre-compute instead of compute at request time?** The recommendation is available instantly for every case in the officer queue without any extra computation — it's already in `cases.json`, and `GET /api/officer/case/{id}` returns it for the case detail screen to render.
 
 #### `intervention_library.json`
-A hand-crafted library of 8 welfare interventions. Each entry contains:
-- `id` — machine name (e.g., `leave_authorization`)
-- `title` — human name (e.g., "Authorise Compensatory Leave")
+A hand-crafted library of 8 welfare interventions — `schedule_leave`, `workload_review`, `counseling_referral`, `posting_rotation_flag`, `transfer_frequency_review`, `training_schedule_review`, `peer_support_referral`, `commander_escalation`. Each entry contains:
+- `id` — machine name (e.g., `schedule_leave`)
+- `title` — human name (e.g., "Schedule Earned Leave")
 - `description` — what the action actually involves in plain language
-- `action_owner` — who takes the action (`officer`, `commander`, `self`)
-- `priority` — `low`, `medium`, `high`
+- `action_owner` — who takes the action: `reporting_officer`, `unit_commander`, `welfare_officer`, `establishment_branch`, `training_officer` or `peer_support_coordinator`
+- `recipient` — which role sees it
+- `priority` — integer, 1 = most urgent, used to rank the output
 - `applicable_risk_levels` — which risk bands this applies to
 - `applicable_signals` — which behavioral signals trigger this intervention
-- `applicable_attributions` — `Individual`, `Systemic`, `Mixed`, or `Any`
+- `applicable_attribution` — any of `Individual`, `Systemic`, `Mixed`
 
 **The 8 interventions:**
 | ID | Title | Owner |
@@ -1093,7 +1123,7 @@ snapshot_date: str
 - Runs full **7-stage** pipeline (was 6 before recommendations + alerts were added)
 - Now also calls `action_mapper.recommend_from_case()` for every case and `alert_rules.generate_alert_batch()` for the whole force
 - Writes **7 JSON files** to `data/processed/` (was 6; `alerts.json` is new)
-- SHAP explanations pre-computed for top 150 cases only
+- SHAP explanations pre-computed for all 800 cases at the latest snapshot (about two minutes of batch time)
 
 #### `scripts/README.md`
 - Documents all 4 scripts, their arguments, output files, runtime expectations
@@ -1122,7 +1152,8 @@ All frontends are **dependency-free ES-module apps** — no npm, no build step. 
 Landing page linking to both apps.
 
 #### `frontend/shared/`
-- `api.js` — shared API client (base URL detection, `X-Pwiews-Role` and `X-Pwiews-Subject` headers, typed request functions)
+- `api.js` — shared API client (login, in-memory JWTs held per role, `Authorization: Bearer` on every request, typed request functions)
+- `demo-login.js` — the three demo accounts and the sign-in helpers both apps boot with
 - `styles.css` — shared CSS design system (dark theme, risk-level colours, card components)
 - `ui.js` — shared UI utilities (rendering risk badges, signal bars, trend arrows, error states)
 
@@ -1133,9 +1164,9 @@ Single-page personal wellness app.
 **`index.html`** — HTML shell, imports `src/app.js`
 
 **`src/app.js`** — Router and login:
-- Demo login: fetches `/api/demo/identities`, presents a pseudonym to log in as
+- Demo login: fetches `/api/demo/identities`, then signs in as the chosen pseudonym via `POST /api/auth/login`
 - Routes between 4 screens based on URL hash
-- Sets `X-Pwiews-Role: personnel` and `X-Pwiews-Subject: <pseudonym>` on all requests
+- Sends the returned token as `Authorization: Bearer` on all requests; changing identity signs in again, because the token is scoped to one pseudonym
 
 **`src/screens/WellbeingHome.js`** — Main dashboard:
 - Fetches `/api/personal/{id}/summary`
@@ -1204,7 +1235,7 @@ Single-page personal wellness app.
 | `history.json` | Score history per person across all 6 snapshots |
 | `units.json` | Unit aggregates (mean risk, near-miss pressure, personnel count) |
 | `near_misses.json` | Qualifying near-miss findings |
-| `explanations.json` | Pre-computed SHAP values for top 150 cases |
+| `explanations.json` | Pre-computed SHAP values for every case at the latest snapshot |
 | `meta.json` | Model version, thresholds, band distribution, run timestamp |
 | `alerts.json` | **(NEW)** All alerts — personal notifications, officer alerts, commander near-miss alerts; keyed by role and by pseudonym_id |
 
@@ -1289,7 +1320,7 @@ This is the most important test in the suite because it is the automated proof t
 The documentation suite. All four files were written to be accurate to the actual code and settings — no content is invented or paraphrased from memory.
 
 #### `docs/ps_alignment_matrix.md`
-Maps every component of the SIH26186 problem statement to the exact file and function that implements it. Honest about the three items that remain unbuilt (DB layer, voice upload endpoint, login route). Covers all 8 expected solution components, all 6 technical challenges, and all ethical constraints.
+Maps every component of the SIH26186 problem statement to the exact file and function that implements it. Honest about what remains unbuilt (DB layer, voice upload endpoint, intervention outcome tracking, token revocation). Covers all 8 expected solution components, all 6 technical challenges, and all ethical constraints.
 
 #### `docs/privacy_policy.md`
 What the system holds about personnel, how it is protected, who can access what, and what choices personnel have. Covers:
@@ -1422,8 +1453,8 @@ Stage 4: aggregates
   └─ near_miss_detector.detect_near_misses(...)
      └─ filters to units where condition run reaches latest snapshot
 
-Stage 5: SHAP explanations (top 150 cases only)
-  └─ for each of top 150 rows by score:
+Stage 5: SHAP explanations (every case at the latest snapshot)
+  └─ for each of the 800 latest-snapshot rows:
      └─ scorer.explain_row({signal: value, ...})
         └─ explainability_shap.explain(model, row, background, feature_names)
            └─ _coalition_value_matrix() — all 1024 coalitions in one batch

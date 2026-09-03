@@ -13,9 +13,9 @@ in this codebase. Honest about partial coverage where it exists.
 | **Mobile-based Wellness and Self-Assessment App** | `frontend/personal-app/` | ✅ Full — 4 screens: summary, history, check-in, privacy transparency |
 | **Predictive Behavioral Analytics Engine** | `backend/behavioral_engine/behavioral_signals.py` | ✅ Full — 8 signals, 0–100 normalised, welfare framing |
 | **Stress/Burnout Risk Prediction Model(s)** | `backend/models/` | ✅ Full — 8 candidates trained, Gradient Boosting selected (R²=0.729) |
-| **Welfare Intervention Recommendation System** | `backend/recommendation_engine/` | ✅ Full — 8 pre-approved interventions, rule-based, deterministic |
-| **Role-based Access Control** | `backend/auth/rbac.py`, `backend/auth/jwt_handler.py` | ✅ Full authorisation; JWT auth complete with stdlib HS256 |
-| **Automated Alerts** | `backend/alerts/alert_rules.py` | ✅ Full — 4 alert rules, graduated escalation |
+| **Welfare Intervention Recommendation System** | `backend/recommendation_engine/` | ✅ Full — 8 pre-approved interventions, rule-based, deterministic, rendered on the officer case detail screen |
+| **Role-based Access Control** | `backend/auth/` | ✅ Full authorisation; authentication complete — `POST /api/auth/login` issues HS256 tokens against PBKDF2 hashes, verified on every role-scoped route |
+| **Automated Alerts** | `backend/alerts/alert_rules.py` | ✅ Full — 4 alert rules, graduated escalation, delivered to the personal app and the officer case detail as two separate feeds |
 | **Data Anonymisation and Secure Storage** | `backend/preprocessing/pseudonymize.py` | ✅ Full — HMAC pseudonymisation, separate identity vault, audited re-id path |
 
 ---
@@ -29,7 +29,7 @@ in this codebase. Honest about partial coverage where it exists.
 | **#3: Minimising false positives / false negatives** | Wide Moderate band (40–65) intentionally reduces false negatives. Officer visibility gated by persistence, not single snapshot. Low-confidence alerts suppressed for officer/commander. Handling note appended to every case detail response. |
 | **#4: Privacy and consent** | RBAC with three redundant layers for commander data leakage. `assert_commander_safe()` inspects every commander payload at all nesting depths. Voice pipeline: no transcription, acoustic only. Voice is opt-in. |
 | **#5: Scalability and real-time processing** | Batch architecture: pipeline writes `data/processed/*.json` once; API reads at request time with O(1) lookup via `cases_by_id`. No compute at request time except the what-if simulation. |
-| **#6: Explainability** | Exact Shapley by full coalition enumeration (2¹⁰ = 1024 coalitions for 10 features). Local accuracy asserted on every call. Top-3 factors with human-readable labels shown to both individual and officer. |
+| **#6: Explainability** | Exact Shapley by full coalition enumeration (2¹⁰ = 1024 coalitions for 10 features). Local accuracy asserted on every call. Top-3 factors with human-readable labels shown to both individual and officer. Precomputed for **every** person at the latest snapshot, not a top slice — an explanation only some people can see is not an explainable system. |
 
 ---
 
@@ -50,5 +50,7 @@ in this codebase. Honest about partial coverage where it exists.
 |---|---|---|
 | Voice upload API endpoint | Not built | Record button disabled in frontend; acoustic pipeline runs on batch corpus |
 | SMS/email alert delivery | Not built | Out of scope per `settings.ALERT_CHANNELS = ("in_app",)` |
-| Full DB layer (SQLAlchemy) | Not built | API serves precomputed JSON; only SQLite in use is the pseudonym vault |
+| Full DB layer (SQLAlchemy) | Not built | API serves precomputed JSON; only SQLite in use is the pseudonym vault. Self-assessment answers go to an append-only JSONL file |
+| Intervention outcome tracking | Not built | Recommendations are shown but nothing records what was done or whether it helped — so the system cannot learn which interventions work |
+| Token revocation / refresh | Not built | Tokens expire and cannot be ended early |
 | PyPI packages: FastAPI, shap, librosa, XGBoost | Using stdlib/sklearn equivalents | No package-registry access during build; equivalents documented in STATUS.md |

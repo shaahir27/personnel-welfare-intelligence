@@ -15,6 +15,10 @@ A proactive welfare-support tool designed to detect early indicators of operatio
 
 ### 2. End-to-End Pipeline Execution
 
+The repository ships with the pipeline output already generated, so **step 5
+alone is enough to see the system running.** The earlier steps regenerate
+everything from scratch.
+
 ```bash
 # 1. Generate the synthetic corpus (~15 s) and voluntary check-in audio (~10 s)
 python scripts/generate_synthetic_data.py
@@ -23,15 +27,19 @@ python scripts/generate_voice_audio.py
 # 2. Train & compare all 8 candidate models, register the winner (~40 s)
 python scripts/train_models.py --quick        # use --cv for grouped cross-validation
 
-# 3. Score all personnel, generate recommendations & alerts, write payloads (~60 s)
+# 3. Score all personnel, explain every case, generate recommendations & alerts (~6 min)
 python scripts/run_pipeline.py
 
-# 4. Run the automated test suite (91 passing unit tests)
+# 4. Run the automated test suite (127 passing unit tests)
 python -m unittest discover -s tests
 
 # 5. Serve the REST API and both frontends
 python -m backend.api.main
 ```
+
+> Most of step 3 is exact Shapley enumeration for all 800 people, at roughly
+> 0.2 s each. It is batch work on nothing's critical path — the API only ever
+> reads the result.
 
 ### 3. Accessing the Applications
 
@@ -43,16 +51,37 @@ Open your browser to:
 | **Personal Wellness App** | `http://127.0.0.1:8000/app/personal/` | Self-assessment, score history, notifications, transparency center |
 | **Officer & Commander Dashboard** | `http://127.0.0.1:8000/app/officer/` | Prioritized welfare queue, case details, what-if simulator, unit near-misses |
 
+Both apps sign themselves in, so there is nothing to type. The accounts they use
+are these — the same ones to send to `POST /api/auth/login` when calling the API
+directly:
+
+| Account | Password | Role |
+|---|---|---|
+| `officer` | `welfare-officer-demo` | `welfare_officer` |
+| `commander` | `commander-demo` | `commander` |
+| `personnel` | `personnel-demo` | `personnel` (supply `"subject": "<pseudonym_id>"`) |
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"officer","password":"welfare-officer-demo"}'
+```
+
+These are demonstration credentials over a synthetic corpus, published so the
+system can be reviewed. The hashes are PBKDF2-HMAC-SHA256 in
+`backend/auth/demo_accounts.json`; `backend/auth/README.md` describes what a
+deployment replaces.
+
 ---
 
 ## 🏛️ Core Architecture & Highlights
 
 1. **Zero LLM / Generative AI Path:** All scoring uses verified scikit-learn models (Gradient Boosting, $R^2 = 0.729$), explanations use exact Shapley value enumeration ($2^{10}=1024$ coalitions), and recommendations use a deterministic rule-based mapping engine.
 2. **Acoustic-Only Voice Pipeline:** Analyzes pitch ($F_0$), speaking rate, pause ratios, jitter, and shimmer. **Zero speech-to-text / transcription** exists by construction.
-3. **Strict Privacy & Data Separation:** Direct identifiers are HMAC-SHA256 pseudonymized. Identity mapping is isolated in `data/identity_map.sqlite3` with an audited re-identification log.
+3. **Strict Privacy & Data Separation:** Direct identifiers are HMAC-SHA256 pseudonymized. Identity mapping is isolated in `data/identity_map.sqlite3` with an audited re-identification log. That file is **not committed** — it holds both the mapping and the salt that produced it, so a copy in the repository would undo the pseudonymisation for anyone who cloned it. It is created on the first pipeline run.
 4. **Structural Leak Prevention:** The commander view cannot receive individual-identifiable records — enforced by `rbac.assert_commander_safe()` recursive payload scanning and proved by `tests/test_rbac_api.py`.
-5. **Graduated Alerting & Recommendations:** 3-tier notification system (Personal, Officer, Commander) and 8 pre-approved operational welfare interventions.
-6. **JWT Authentication:** HS256 token verification implemented via stdlib with PyJWT fallback.
+5. **Graduated Alerting & Recommendations:** 3-tier notification system (Personal, Officer, Commander) and 8 pre-approved operational welfare interventions, both surfaced on the screens that act on them. What a person is told about themselves and what an officer is told about that person are separate feeds, by construction.
+6. **JWT Authentication:** HS256 issued by `POST /api/auth/login` against PBKDF2 credential hashes, verified on every role-scoped route. Both frontends hold tokens; the plain role header is off unless `PWIEWS_DEBUG_AUTH=1`.
 
 ---
 
@@ -73,8 +102,8 @@ personnel-welfare-intelligence/
 │   ├── near_miss/               ← Unit-level organizational condition detection
 │   ├── recommendation_engine/   ← 8 pre-approved interventions & rule-based action mapper
 │   ├── alerts/                  ← Graduated 3-tier notification generator
-│   ├── auth/                    ← RBAC, commander payload guard, and JWT handler
-│   └── api/                     ← Starlette REST API and route handlers
+│   ├── auth/                    ← RBAC, commander payload guard, JWT, credential store
+│   └── api/                     ← Starlette REST API, route handlers, check-in store
 │
 ├── frontend/
 │   ├── index.html               ← Landing page
@@ -86,7 +115,8 @@ personnel-welfare-intelligence/
 │   ├── raw/                     ← Raw synthetic CSVs and WAV audio files
 │   ├── processed/               ← 7 precomputed JSON dashboard payloads
 │   ├── schema/                  ← JSON table schemas
-│   └── identity_map.sqlite3     ← Isolated identity database & re-identification audit log
+│   ├── responses/               ← Self-assessment answers (runtime, not committed)
+│   └── identity_map.sqlite3     ← Identity vault & re-identification audit (not committed)
 │
 ├── docs/                        ← Comprehensive documentation suite
 │   ├── ps_alignment_matrix.md   ← 1-to-1 mapping of problem statement to code
@@ -112,16 +142,28 @@ python -m unittest discover -s tests
 
 Tests verify:
 - Commander payload data-leak proof (`test_rbac_api.py`)
+- Route-level auth and role scope, end to end over HTTP (`test_api_routes.py`)
 - JWT creation, verification, tampering, and expiration (`test_jwt_auth.py`)
 - Graduated alerting rules and confidence suppression (`test_alert_rules.py`)
 - Recommendation determinism and attribution filters (`test_recommendation_engine.py`)
+- Self-assessment answer validation and per-person scoping (`test_checkin_store.py`)
 - Voice pipeline DSP invariance and weight sums (`test_voice_pipeline.py`)
 - Behavioral signal weights and settings contracts (`test_behavioral_engine.py`)
+
+`test_api_routes.py` drives the real ASGI app through Starlette's `TestClient`
+and needs `httpx`; it skips cleanly when that is not installed. It is the file
+that would have caught the two authorisation defects fixed in this pass, both of
+which were invisible to a unit test of `rbac.py` — the functions were correct
+throughout, but one route did not call them and one header path bypassed them.
 
 ---
 
 ## 📖 Further Reading
 
-- [**Codebase Guide (`CodebaseGuide.md`)**](file:///d:/Desktop/project/personnel-welfare-intelligence/CodebaseGuide.md) — Comprehensive layman and deep-dive technical explanation of every file, algorithm, and flow.
-- [**Status Report (`STATUS.md`)**](file:///d:/Desktop/project/personnel-welfare-intelligence/STATUS.md) — Exact audit of completed components and environment-forced deviations.
-- [**Documentation Suite (`docs/`)**](file:///d:/Desktop/project/personnel-welfare-intelligence/docs/) — Full PS alignment, privacy policy, model comparison report, and data dictionary.
+- [**Codebase Guide**](CodebaseGuide.md) — Comprehensive layman and deep-dive technical explanation of every file, algorithm, and flow.
+- [**Status Report**](STATUS.md) — Exact audit of completed components and environment-forced deviations.
+- [**PS Alignment Matrix**](docs/ps_alignment_matrix.md) — One-to-one mapping of problem statement to code.
+- [**Privacy Policy**](docs/privacy_policy.md) — Data governance, voice protection, and individual rights.
+- [**Model Comparison Report**](docs/model_comparison_report.md) — Eight-model evaluation and selection proof.
+- [**Data Dictionary**](docs/data_dictionary.md) — Every field in every CSV and JSON.
+- [**Auth module**](backend/auth/README.md) — Login flow, the demo credential store, and what a deployment replaces.

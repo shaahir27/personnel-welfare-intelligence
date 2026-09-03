@@ -51,9 +51,10 @@ every pipeline run). It is personal data with its own retention constant,
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from backend.config import settings
 
@@ -103,6 +104,36 @@ def _connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def _session(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Open the log for one unit of work, commit it, and close the handle.
+
+    Args:
+        path: Database file. Defaults to ``settings.ACCESS_LOG_DB_PATH``.
+
+    Yields:
+        A connection, inside its own transaction.
+
+    Why this exists rather than ``with _connect(path) as conn``:
+        ``sqlite3.Connection`` is its own context manager, but it only commits
+        or rolls back the transaction -- it does **not** close the connection.
+        The handle therefore stayed open after every call. On Linux that is
+        invisible, because an open file can still be unlinked; on Windows it
+        cannot, so a test logging into a ``TemporaryDirectory`` failed during
+        cleanup rather than on any assertion, and the suite was red on one
+        platform and green on the other for the same code.
+
+        Every access here is one short unit of work, so closing per call costs
+        nothing measurable and removes the platform difference entirely.
+    """
+    conn = _connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def record_access(
     actor_role: str,
     actor_subject: str,
@@ -143,7 +174,7 @@ def record_access(
         "pseudonym_id": pseudonym_id,
         "outcome": outcome,
     }
-    with _connect(path) as conn:
+    with _session(path) as conn:
         conn.execute(
             "INSERT INTO access_log (at, actor_role, actor_subject, action, pseudonym_id, outcome) "
             "VALUES (:at, :actor_role, :actor_subject, :action, :pseudonym_id, :outcome)",
@@ -165,7 +196,7 @@ def access_summary(pseudonym_id: str, path: Path | None = None) -> Dict[str, Any
         ``last_accessed_at`` across granted third-party reads. Counts and
         dates only -- no actor identity, by design.
     """
-    with _connect(path) as conn:
+    with _session(path) as conn:
         rows = conn.execute(
             "SELECT actor_role, outcome, at FROM access_log WHERE pseudonym_id = ? ORDER BY at",
             (str(pseudonym_id),),
@@ -211,12 +242,12 @@ def purge_expired(
         Number of rows deleted.
     """
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=retention_days)
-    with _connect(path) as conn:
+    with _session(path) as conn:
         cursor = conn.execute("DELETE FROM access_log WHERE at < ?", (cutoff.isoformat(),))
         return int(cursor.rowcount)
 
 
 def count(path: Path | None = None) -> int:
     """Return how many rows the log holds."""
-    with _connect(path) as conn:
+    with _session(path) as conn:
         return int(conn.execute("SELECT COUNT(*) AS n FROM access_log").fetchone()["n"])

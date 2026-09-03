@@ -11,6 +11,8 @@ htmlcov/
 # undo the pseudonymisation for anyone who cloned the repo. Regenerate it with
 # scripts/generate_synthetic_data.py.
 *.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Self-assessment answers written by the running API. Runtime state, and
 # somebody's own words — not build output, and not ours to publish.

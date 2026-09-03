@@ -5,14 +5,21 @@ what-if simulation.
 
 Officer visibility is a decision, not a default
 -----------------------------------------------
-The queue does not contain everybody. It contains cases the escalation rule has
-made visible: currently High, or Moderate that has persisted for at least
-``settings.TREND_PERSISTENCE_SNAPSHOTS`` consecutive snapshots. Everyone else
-is scored, can see their own score, and is not shown to an officer at all.
+The queue does not contain everybody. It contains cases the escalation rule in
+``post_model_analytics/escalation.py`` has made visible: currently High, or
+Moderate that has persisted for ``settings.TREND_PERSISTENCE_SNAPSHOTS``
+consecutive snapshots and is rising. Everyone else is scored, can see their
+own score, and is not shown to an officer at all.
 
 That filtering happens **here, on the server**, not in the dashboard's
 rendering. An officer cannot page past the end of the queue into the rest of
-the force, because the rest of the force is not in the response.
+the force, because the rest of the force is not in the response. The rule is
+imported, not restated, so this module and the alert rules cannot disagree
+about who is visible.
+
+Every access decision on an individual record -- granted or refused -- is
+written to ``backend/db/access_log.py`` from the handler itself, so a reader
+of the handler can see that it is recorded.
 """
 
 from __future__ import annotations
@@ -23,10 +30,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from backend.api import request_parsing
 from backend.api.store import ProcessedStore
 from backend.auth import rbac
 from backend.config import settings
+from backend.db import access_log
 from backend.models import predict
+from backend.post_model_analytics import escalation
 
 # Sort weight applied to a case's score to order the queue. Rising trends are
 # promoted because the point of the system is early intervention: a person at 66
@@ -39,28 +49,8 @@ TREND_PRIORITY_BONUS = {"Rising": 8.0, "Stable": 0.0, "Improving": -6.0}
 LOW_CONFIDENCE_PENALTY = 5.0
 
 
-def is_officer_visible(case: Dict[str, Any]) -> bool:
-    """Decide whether a case may appear in the officer queue.
-
-    Args:
-        case: A case entry from the processed store.
-
-    Returns:
-        True when the case is currently High, or has been Moderate-or-above for
-        at least the configured persistence run.
-
-    Rationale:
-        A single Moderate month is often one hard rotation. Escalating it puts a
-        person in front of a welfare officer for something that resolves by
-        itself, which is precisely the stigmatisation cost PS technical
-        challenge #2 names. Persistence is what distinguishes a bad month from
-        a pattern.
-    """
-    level = case.get("risk", {}).get("level")
-    if level == settings.RISK_LEVELS[2]:
-        return True
-    trend = case.get("trend") or {}
-    return bool(trend.get("is_persistent"))
+# The escalation rule, re-exported so existing callers and tests keep one name.
+is_officer_visible = escalation.is_officer_visible
 
 
 def priority_score(case: Dict[str, Any]) -> float:
@@ -91,16 +81,26 @@ def build_queue(store: ProcessedStore) -> List[Dict[str, Any]]:
         queue view needs. Full detail is a separate request per case, so simply
         opening the dashboard does not pull every visible person's factor
         breakdown into the browser.
+
+    Note:
+        The queue is a pure function of the loaded snapshot, so it is built
+        once per store and memoised on it. Reloading the store rebuilds it.
     """
+    cached = store.cache.get("officer_queue")
+    if cached is not None:
+        return cached
+
     visible = [c for c in store.cases if is_officer_visible(c)]
     visible.sort(key=priority_score, reverse=True)
-    return [
+    queue_rows = [
         {
             "pseudonym_id": c["pseudonym_id"],
             "unit_id": c["unit_id"],
             "posting_type": c["posting_type"],
             "risk_level": c["risk"]["level"],
             "score": c["risk"]["score"],
+            "band_certainty": c["risk"].get("band_certainty"),
+            "interval": c["risk"].get("interval"),
             "trend_direction": (c.get("trend") or {}).get("direction"),
             "persistence_snapshots": (c.get("trend") or {}).get("persistence_snapshots"),
             "confidence_level": c["confidence"]["level"],
@@ -110,6 +110,26 @@ def build_queue(store: ProcessedStore) -> List[Dict[str, Any]]:
         }
         for c in visible
     ]
+    store.cache["officer_queue"] = queue_rows
+    return queue_rows
+
+
+def _log(principal: rbac.Principal, action: str, pseudonym_id: str, granted: bool) -> None:
+    """Record one access decision on an individual record.
+
+    Args:
+        principal: Who asked.
+        action: One of the ``access_log.ACTION_*`` constants.
+        pseudonym_id: Whose record.
+        granted: Whether the request was served.
+    """
+    access_log.record_access(
+        actor_role=principal.role,
+        actor_subject=principal.subject,
+        action=action,
+        pseudonym_id=pseudonym_id,
+        outcome=access_log.OUTCOME_GRANTED if granted else access_log.OUTCOME_REFUSED,
+    )
 
 
 async def queue(request: Request) -> JSONResponse:
@@ -119,19 +139,20 @@ async def queue(request: Request) -> JSONResponse:
 
     store: ProcessedStore = request.app.state.store
     cases = build_queue(store)
+    borderline = sum(1 for c in cases if c.get("band_certainty") == "borderline")
     return JSONResponse(
         {
             "generated_at": store.meta.get("generated_at"),
             "snapshot_date": store.meta.get("latest_snapshot"),
             "population": store.meta.get("population"),
             "visible_count": len(cases),
-            "visibility_rule": (
-                f"A case appears here only when it is currently "
-                f"{settings.RISK_LEVELS[2]}, or has been "
-                f"{settings.RISK_LEVELS[1]} or above for "
-                f"{settings.TREND_PERSISTENCE_SNAPSHOTS} consecutive snapshots. "
-                f"Everyone else is scored and can see their own result, but is "
-                f"not shown here."
+            "borderline_count": borderline,
+            "visibility_rule": escalation.visibility_rule_text(),
+            "band_certainty_note": (
+                "Each score carries a calibrated range (split conformal "
+                "prediction, see /api/meta). A case is marked borderline when "
+                "that range crosses a band boundary; its band is then "
+                "provisional rather than settled."
             ),
             "cases": cases,
         }
@@ -149,6 +170,7 @@ async def case_detail(request: Request) -> JSONResponse:
     if case is None:
         return JSONResponse({"detail": "case not found"}, status_code=404)
     if not is_officer_visible(case):
+        _log(principal, access_log.ACTION_VIEW_CASE, pseudonym_id, granted=False)
         return JSONResponse(
             {
                 "detail": (
@@ -159,12 +181,11 @@ async def case_detail(request: Request) -> JSONResponse:
             },
             status_code=403,
         )
+    _log(principal, access_log.ACTION_VIEW_CASE, pseudonym_id, granted=True)
 
     explanation = store.explanations.get(pseudonym_id)
     unit = store.unit(case["unit_id"]) or {}
-    near_miss = next(
-        (n for n in store.near_misses if str(n["unit_id"]) == case["unit_id"]), None
-    )
+    near_miss = store.near_miss(case["unit_id"])
 
     return JSONResponse(
         {
@@ -197,6 +218,11 @@ async def case_detail(request: Request) -> JSONResponse:
             },
             "unit_near_miss": near_miss,
             "history": store.history.get(pseudonym_id, []),
+            "thresholds": store.meta.get("thresholds", {}),
+            "access_note": (
+                "This view has been recorded in the access log. The individual "
+                "can see that their record was opened and when, but not by whom."
+            ),
             "handling_note": (
                 "This case is shown for welfare support. It is not a performance "
                 "record and must not be used in any disciplinary, posting or "
@@ -213,7 +239,14 @@ async def what_if(request: Request) -> JSONResponse:
         ``{"pseudonym_id": str, "adjustments": {signal_name: new_value, ...}}``
 
     Returns the current score, the projected score with those signal values
-    replaced, and the difference.
+    replaced, the difference, and the calibrated range around the projection.
+
+    Validation (``backend/api/request_parsing.py``): only the nine behavioral
+    signals may be adjusted, values must be finite numbers within the 0-100
+    scale, and a malformed body is a 400 rather than a traceback. The voice
+    columns are not adjustable -- a voice reading is the person's own, and the
+    presence flag is a fact about the data, not a condition to hypothesise
+    about.
 
     This is explicitly labelled illustrative in the response and on screen. It
     shows how the *model* responds to different inputs; it is not a forecast,
@@ -224,36 +257,48 @@ async def what_if(request: Request) -> JSONResponse:
     principal = rbac.principal_from_headers(request.headers)
     rbac.require_role(principal, settings.ROLE_WELFARE_OFFICER)
 
-    body = await request.json()
-    pseudonym_id = str(body.get("pseudonym_id", ""))
-    adjustments = dict(body.get("adjustments", {}))
+    try:
+        body = await request_parsing.read_json_object(request)
+        pseudonym_id = request_parsing.parse_non_empty_string(body, "pseudonym_id")
+        adjustments = request_parsing.parse_signal_adjustments(body.get("adjustments", {}))
+    except request_parsing.InvalidRequest as exc:
+        return request_parsing.bad_request(exc)
 
     store: ProcessedStore = request.app.state.store
     case = store.cases_by_id.get(pseudonym_id)
     if case is None:
         return JSONResponse({"detail": "case not found"}, status_code=404)
     if not is_officer_visible(case):
+        _log(principal, access_log.ACTION_WHAT_IF, pseudonym_id, granted=False)
         return JSONResponse({"detail": "case not available at officer level"}, status_code=403)
+    _log(principal, access_log.ACTION_WHAT_IF, pseudonym_id, granted=True)
 
     scorer = predict.cached_scorer()
     baseline_signals = dict(case["signals"])
-    projected_signals = {**baseline_signals}
-    for name, value in adjustments.items():
-        if name in projected_signals:
-            projected_signals[name] = float(value)
+    projected_signals = {**baseline_signals, **adjustments}
 
-    current = scorer.score_row(baseline_signals)
-    projected = scorer.score_row(projected_signals)
+    current = scorer.score_row_with_interval(baseline_signals)
+    projected = scorer.score_row_with_interval(projected_signals)
+
+    def _interval(result: Dict[str, Any]) -> Dict[str, Any] | None:
+        if result["interval_low"] is None:
+            return None
+        return {
+            "low": round(result["interval_low"], 1),
+            "high": round(result["interval_high"], 1),
+            "coverage": result["coverage"],
+        }
 
     return JSONResponse(
         {
             "pseudonym_id": pseudonym_id,
-            "current_score": round(current, 1),
-            "projected_score": round(projected, 1),
-            "change": round(projected - current, 1),
-            "adjusted_signals": {
-                k: v for k, v in projected_signals.items() if k in adjustments
-            },
+            "current_score": round(current["score"], 1),
+            "projected_score": round(projected["score"], 1),
+            "change": round(projected["score"] - current["score"], 1),
+            "current_interval": _interval(current),
+            "projected_interval": _interval(projected),
+            "adjusted_signals": adjustments,
+            "adjustable_signals": list(settings.BEHAVIORAL_SIGNAL_NAMES),
             "is_illustrative": True,
             "disclaimer": (
                 "Illustrative only. This shows how the model responds to different "

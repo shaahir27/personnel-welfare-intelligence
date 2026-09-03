@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from backend.config import settings
+from backend.post_model_analytics import escalation
+from backend.post_model_analytics.risk_classifier import BORDERLINE_NOTE
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +87,13 @@ def _confidence_ok(case: Dict[str, Any]) -> bool:
         False when confidence is Low, suppressing alerts on thin data
         (PS technical challenge #3: minimising false positives).
     """
-    level = case.get("confidence", {}).get("level", "Low")
+    level = (case.get("confidence") or {}).get("level", settings.CONFIDENCE_LEVELS[0])
     levels = list(settings.CONFIDENCE_LEVELS)  # ("Low", "Medium", "High")
-    min_level = settings.ALERT_MIN_CONFIDENCE_LEVEL
-    return levels.index(level) >= levels.index(min_level)
+    if level not in levels:
+        # An unknown level is thin data by definition; treating it as Low
+        # suppresses rather than aborting the whole batch on one bad case.
+        return False
+    return levels.index(level) >= levels.index(settings.ALERT_MIN_CONFIDENCE_LEVEL)
 
 
 def evaluate_case_alerts(case: Dict[str, Any]) -> List[Alert]:
@@ -108,10 +113,13 @@ def evaluate_case_alerts(case: Dict[str, Any]) -> List[Alert]:
            (the person deserves to know their own indicators).
         2. ``officer_alert_high``: Score is High AND confidence >= Medium.
            Recipient: welfare officer.
-        3. ``officer_alert_persistent``: Score has been Moderate+ for
-           ``settings.TREND_PERSISTENCE_SNAPSHOTS`` consecutive snapshots
-           AND confidence >= Medium.
-           Recipient: welfare officer.
+        3. ``officer_alert_persistent``: The case has met the persistence
+           path of the escalation rule (``post_model_analytics/escalation``:
+           Moderate+ for ``settings.TREND_PERSISTENCE_SNAPSHOTS`` consecutive
+           snapshots and, by default, Rising) AND confidence >= Medium.
+           Recipient: welfare officer. The queue and this rule share one
+           definition, so an officer is never alerted about a case they
+           cannot open.
         4. ``officer_alert_rising_high``: Score is High AND trend is Rising
            (the urgent case -- climbing and already high).
            Recipient: welfare officer, priority ``urgent``.
@@ -126,6 +134,7 @@ def evaluate_case_alerts(case: Dict[str, Any]) -> List[Alert]:
     direction = trend.get("direction", "Stable")
     persistence = int(trend.get("persistence_snapshots") or 0)
     confidence_ok = _confidence_ok(case)
+    borderline = bool(risk.get("is_borderline"))
 
     # Rule 1: Personal notification for Moderate or High.
     if level in (settings.RISK_LEVELS[1], settings.RISK_LEVELS[2]):  # Moderate, High
@@ -163,18 +172,16 @@ def evaluate_case_alerts(case: Dict[str, Any]) -> List[Alert]:
                     f"A case in your assigned scope has reached the High risk "
                     f"band (score {score:.0f}). This is a welfare indicator, not "
                     f"a disciplinary matter. Please review the case detail."
+                    + (f" {BORDERLINE_NOTE}" if borderline else "")
                 ),
                 pseudonym_id=pid,
                 snapshot_date=snapshot,
             )
         )
 
-    # Rule 3: Officer alert for persistent Moderate.
-    if (
-        level in (settings.RISK_LEVELS[1], settings.RISK_LEVELS[2])
-        and persistence >= settings.TREND_PERSISTENCE_SNAPSHOTS
-        and level != settings.RISK_LEVELS[2]  # already covered by Rule 2
-    ):
+    # Rule 3: Officer alert for persistent Moderate -- the persistence path of
+    # the escalation rule, evaluated by the same function the queue uses.
+    if level != settings.RISK_LEVELS[2] and escalation.is_officer_visible(case):
         alerts.append(
             Alert(
                 alert_id=f"officer_alert_persistent__{pid}",
@@ -184,8 +191,9 @@ def evaluate_case_alerts(case: Dict[str, Any]) -> List[Alert]:
                 title="Persistent Moderate welfare concern",
                 body=(
                     f"A case has been at Moderate or above for "
-                    f"{persistence} consecutive snapshots. Persistent patterns "
-                    f"may benefit from a welfare check-in."
+                    f"{persistence} consecutive snapshots"
+                    + (" and is rising" if direction == escalation.RISING else "")
+                    + ". Persistent patterns may benefit from a welfare check-in."
                 ),
                 pseudonym_id=pid,
                 snapshot_date=snapshot,
@@ -232,7 +240,14 @@ def evaluate_near_miss_alerts(near_misses: Sequence[Dict[str, Any]]) -> List[Ale
     alerts: List[Alert] = []
     for finding in near_misses:
         unit_id = str(finding.get("unit_id", ""))
-        snapshot = str(finding.get("snapshot_date", finding.get("detected_at", "")))
+        # ``NearMiss.to_dict()`` writes ``last_detected``; the older keys are
+        # kept so a hand-built finding still resolves.
+        snapshot = str(
+            finding.get("last_detected")
+            or finding.get("snapshot_date")
+            or finding.get("detected_at")
+            or ""
+        )
         summary = finding.get("summary", f"Unit {unit_id} welfare near-miss")
         alerts.append(
             Alert(

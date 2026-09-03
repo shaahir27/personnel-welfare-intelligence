@@ -72,6 +72,7 @@ from backend.api import store as store_module  # noqa: E402
 from backend.api.routes import auth, commander, officer, personal  # noqa: E402
 from backend.auth import rbac  # noqa: E402
 from backend.config import settings  # noqa: E402
+from backend.post_model_analytics import escalation  # noqa: E402
 
 
 async def meta(request: Request) -> JSONResponse:
@@ -94,6 +95,10 @@ async def meta(request: Request) -> JSONResponse:
             "model": current.meta.get("model"),
             "thresholds": current.meta.get("thresholds"),
             "band_distribution": current.meta.get("band_distribution"),
+            "band_certainty": current.meta.get("band_certainty"),
+            "conformal": current.meta.get("conformal"),
+            "escalation_rule": escalation.visibility_rule_text(),
+            "officer_visible_count": current.meta.get("officer_visible_count"),
             "signal_labels": current.meta.get("signal_labels"),
             "roles": list(settings.ROLES),
             "auth_note": (

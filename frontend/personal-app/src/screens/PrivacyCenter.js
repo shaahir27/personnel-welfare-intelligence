@@ -47,6 +47,24 @@ export async function renderPrivacyCenter(pseudonymId) {
   ])));
   root.appendChild(choiceCard);
 
+  if (data.record_access) {
+    const ra = data.record_access;
+    const roles = Object.entries(ra.by_role || {});
+    root.appendChild(el("div", { class: "card" }, [
+      el("h2", { text: "Who has opened your record" }),
+      roles.length
+        ? el("dl", { class: "kv small" }, roles.flatMap(([role, n]) => [
+            el("dt", { text: role.replace(/_/g, " ") }), el("dd", { text: `${n} time(s)` }),
+          ]).concat([
+            el("dt", { text: "First" }), el("dd", { text: String(ra.first_accessed_at || "—").slice(0, 19).replace("T", " ") }),
+            el("dt", { text: "Most recent" }), el("dd", { text: String(ra.last_accessed_at || "—").slice(0, 19).replace("T", " ") }),
+          ]))
+        : el("div", { class: "small", text: "No welfare officer has opened your record." }),
+      ra.total_refused ? el("div", { class: "small muted", text: `${ra.total_refused} attempt(s) were refused by the server.` }) : null,
+      el("div", { class: "note", text: ra.note }),
+    ]));
+  }
+
   root.appendChild(el("div", { class: "card" }, [
     el("h2", { text: "Never used for" }),
     el("ul", {}, data.not_used_for.map((t) => el("li", { class: "small", text: t }))),

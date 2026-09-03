@@ -1,24 +1,24 @@
 {
-  "generated_at": "2026-09-03T03:38:01.881798+00:00",
+  "generated_at": "2026-09-03T16:54:32.166061+00:00",
   "reference_date": "2026-09-01",
   "latest_snapshot": "2026-09-01",
   "population": 800,
   "snapshot_count": 6,
   "voice_coverage": 0.0042,
   "model": {
-    "version": "v20260903T030520Z",
+    "version": "v20260903T164524Z",
     "name": "gradient_boosting",
     "display_name": "Gradient Boosting Regressor",
     "is_tree_based": true,
-    "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0057 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
+    "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0156 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
     "metrics": {
-      "mae": 4.566657938394224,
-      "rmse": 5.861646747723143,
-      "r2": 0.8074479522178425,
-      "band_accuracy": 0.8072916666666666,
-      "high_recall": 0.6711409395973155,
-      "high_precision": 0.8,
-      "escalation_recall": 0.9435695538057742
+      "mae": 4.509288884150924,
+      "rmse": 5.759749785864446,
+      "r2": 0.8213865927559669,
+      "band_accuracy": 0.8052083333333333,
+      "high_recall": 0.7068062827225131,
+      "high_precision": 0.7941176470588235,
+      "escalation_recall": 0.9582790091264668
     },
     "feature_names": [
       "workload_deviation_signal",
@@ -40,9 +40,36 @@
     "min_unit_size_for_aggregate": 10
   },
   "band_distribution": {
-    "Normal": 119,
-    "Moderate": 525,
-    "High": 156
+    "Normal": 120,
+    "Moderate": 535,
+    "High": 145
+  },
+  "band_certainty": {
+    "certain": 201,
+    "borderline": 599
+  },
+  "officer_visible_count": 159,
+  "escalation_rule": "A case is visible to a welfare officer only when it is currently High, or has been Moderate or above for 3 consecutive snapshots with a rising trend. Everyone else is scored and can see their own result, but is not shown to an officer.",
+  "conformal": {
+    "method": "split-conformal-absolute-residual",
+    "coverage": 0.9,
+    "half_width": 9.8879,
+    "calibration_rows": 768,
+    "calibration_people": 128,
+    "quantile_rank": 693,
+    "verified_on_test_rows": 960,
+    "verified_on_test_people": 160,
+    "empirical_test_coverage": 0.9146,
+    "note": "Coverage is with respect to the label the model was trained on. On the synthetic corpus that label is the generator's formula plus injected noise; the interval quantifies model error against that label and is not validation against real welfare outcomes."
+  },
+  "deployed_metrics": {
+    "mae": 4.549564862995546,
+    "rmse": 5.781073316928057,
+    "r2": 0.8200616328757688,
+    "band_accuracy": 0.8,
+    "high_recall": 0.6858638743455497,
+    "high_precision": 0.7987804878048781,
+    "escalation_recall": 0.9608865710560626
   },
   "signal_labels": {
     "workload_deviation_signal": "Duty hours above the standard workload",

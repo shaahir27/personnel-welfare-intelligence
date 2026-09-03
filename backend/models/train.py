@@ -16,9 +16,20 @@ inflates every metric substantially and produces a comparison that says nothing
 about how the system would behave on a person it has never encountered, which is
 the only case that matters in deployment.
 
-``GroupShuffleSplit`` on ``pseudonym_id`` is used instead: a person is wholly in
+``GroupShuffleSplit`` on the person is used instead: a person is wholly in
 training or wholly in test. Cross-validation uses ``GroupKFold`` for the same
 reason.
+
+THE SPLIT KEY IS NOT THE PSEUDONYM STRING
+-----------------------------------------
+Pseudonyms are HMACs under a salt that lives in the identity vault, which is
+not committed and is regenerated on every fresh clone. ``GroupShuffleSplit``
+permutes the *sorted unique* group values, so keying on the pseudonym string
+meant every clone got a different partition of people and different metrics
+from the same seed -- the documented "deterministic" comparison was not.
+:func:`person_codes` maps each person to their position of first appearance in
+the roster instead, which is fixed by the raw data and independent of the
+salt. Same seed, same people, on any machine.
 
 WHAT IS AND IS NOT TUNED
 ------------------------
@@ -56,7 +67,8 @@ class SplitData:
         x_test: Test features.
         y_train: Training targets.
         y_test: Test targets.
-        groups_train: Person id per training row, for grouped CV.
+        groups_train: Salt-independent person code per training row (see
+            :func:`person_codes`), for grouped CV and the calibration carve.
         feature_names: Column order the arrays were built from.
         train_people: Number of distinct people in training.
         test_people: Number of distinct people in test.
@@ -148,6 +160,21 @@ def build_modelling_dataset(
     )
 
 
+def person_codes(groups: pd.Series) -> np.ndarray:
+    """Map each row's person to a salt-independent integer key.
+
+    Args:
+        groups: Person identifier per row (pseudonyms), in row order.
+
+    Returns:
+        Integer code per row, assigned in order of first appearance. The
+        feature matrix is built in roster order, so the codes depend on the
+        raw data and not on the vault's salt.
+    """
+    codes, _ = pd.factorize(pd.Series(groups).astype(str), sort=False)
+    return np.asarray(codes, dtype=np.int64)
+
+
 def make_split(
     features: pd.DataFrame,
     target: pd.Series,
@@ -174,18 +201,19 @@ def make_split(
         out the same, but the people fraction is the one that is conceptually
         correct.
     """
+    codes = person_codes(groups)
     splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
-    train_index, test_index = next(splitter.split(features, target, groups=groups))
+    train_index, test_index = next(splitter.split(features, target, groups=codes))
 
     return SplitData(
         x_train=features.iloc[train_index].to_numpy(dtype=np.float64),
         x_test=features.iloc[test_index].to_numpy(dtype=np.float64),
         y_train=target.iloc[train_index].to_numpy(dtype=np.float64),
         y_test=target.iloc[test_index].to_numpy(dtype=np.float64),
-        groups_train=groups.iloc[train_index].to_numpy(),
+        groups_train=codes[train_index],
         feature_names=list(features.columns),
-        train_people=int(groups.iloc[train_index].nunique()),
-        test_people=int(groups.iloc[test_index].nunique()),
+        train_people=int(len(np.unique(codes[train_index]))),
+        test_people=int(len(np.unique(codes[test_index]))),
     )
 
 
@@ -278,6 +306,104 @@ def train_all_candidates(
     ]
 
 
+@dataclass
+class CalibrationSplit:
+    """The training people divided into a fit slice and a calibration slice.
+
+    Attributes:
+        x_fit: Features the deployed model is fitted on.
+        y_fit: Their targets.
+        x_calibration: Features the model never sees, used only to measure
+            its residuals.
+        y_calibration: Their targets.
+        fit_people: Distinct people in the fit slice.
+        calibration_people: Distinct people in the calibration slice.
+    """
+
+    x_fit: np.ndarray
+    y_fit: np.ndarray
+    x_calibration: np.ndarray
+    y_calibration: np.ndarray
+    fit_people: int
+    calibration_people: int
+
+    def summary(self) -> str:
+        """Return a one-line description of the carve."""
+        return (
+            f"{len(self.y_fit)} fit rows from {self.fit_people} people, "
+            f"{len(self.y_calibration)} calibration rows from "
+            f"{self.calibration_people} people"
+        )
+
+
+def carve_calibration(
+    split: SplitData,
+    calibration_size: float = settings.CONFORMAL_CALIBRATION_RATIO,
+    random_state: int = settings.RANDOM_SEED,
+) -> CalibrationSplit:
+    """Divide the training people into a fit slice and a calibration slice.
+
+    Args:
+        split: The train/test split. Only its training side is touched; the
+            test people stay untouched and unseen, so they can verify the
+            calibration afterwards.
+        calibration_size: Fraction of training *people* held out for
+            calibration.
+        random_state: Seed. Offset from the outer split's seed so the two
+            shuffles are not the same permutation applied twice.
+
+    Returns:
+        A :class:`CalibrationSplit`.
+
+    Why this is a second split rather than reusing the test set:
+        The test set chose the model. A residual quantile measured on the same
+        people would inherit that selection, and the conformal guarantee is
+        stated for a calibration set the whole procedure -- fit *and* choice
+        -- never saw. Paying a fifth of the training people is the price of
+        being able to say that plainly.
+    """
+    splitter = GroupShuffleSplit(
+        n_splits=1, test_size=calibration_size, random_state=random_state + 1
+    )
+    fit_index, calibration_index = next(
+        splitter.split(split.x_train, split.y_train, groups=split.groups_train)
+    )
+    return CalibrationSplit(
+        x_fit=split.x_train[fit_index],
+        y_fit=split.y_train[fit_index],
+        x_calibration=split.x_train[calibration_index],
+        y_calibration=split.y_train[calibration_index],
+        fit_people=int(len(np.unique(split.groups_train[fit_index]))),
+        calibration_people=int(len(np.unique(split.groups_train[calibration_index]))),
+    )
+
+
+def fit_for_deployment(
+    spec: ModelSpec, x_fit: np.ndarray, y_fit: np.ndarray
+) -> BaseEstimator:
+    """Fit the selected candidate on the fit slice for deployment.
+
+    Args:
+        spec: The selected candidate specification.
+        x_fit: Fit-slice features.
+        y_fit: Fit-slice targets.
+
+    Returns:
+        A freshly fitted estimator.
+
+    Why not refit on everything:
+        A model fitted on all the data has no rows left it has never seen, so
+        nothing can calibrate its intervals and nothing can check them. The
+        deployed model is fitted on the fit slice, calibrated on the
+        calibration slice, and its coverage is verified on the test people.
+        Every number recorded about it is measured on rows it did not train
+        on.
+    """
+    estimator = clone(spec.estimator)
+    estimator.fit(np.asarray(x_fit, dtype=np.float64), np.asarray(y_fit, dtype=np.float64))
+    return estimator
+
+
 def refit_on_all_data(
     spec: ModelSpec, features: pd.DataFrame, target: pd.Series
 ) -> BaseEstimator:
@@ -291,12 +417,11 @@ def refit_on_all_data(
     Returns:
         A freshly fitted estimator.
 
-    Why refit at all:
-        The comparison needs a held-out set to be meaningful, but once the
-        choice is made there is no reason to deploy a model that has seen only
-        80% of the data. The reported metrics remain those from the held-out
-        evaluation -- they are never recomputed on the refitted model, which
-        would be measuring it on its own training data.
+    Note:
+        No longer used by ``scripts/train_models.py``, which deploys the model
+        fitted by :func:`fit_for_deployment` so that its intervals can be
+        calibrated and checked on rows it never saw. Kept for callers that
+        want a plain refit without intervals.
     """
     estimator = clone(spec.estimator)
     estimator.fit(features.to_numpy(dtype=np.float64), target.to_numpy(dtype=np.float64))

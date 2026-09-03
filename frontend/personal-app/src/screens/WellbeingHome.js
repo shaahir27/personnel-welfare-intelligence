@@ -3,7 +3,7 @@
  * One job: show a person everything the system currently holds about them.
  */
 import { api } from "../../../shared/api.js";
-import { badge, el, factorBar, meter, trendText } from "../../../shared/ui.js";
+import { badge, el, factorBar, intervalText, meter, trendText } from "../../../shared/ui.js";
 
 /**
  * Render the wellbeing home screen.
@@ -32,6 +32,14 @@ export async function renderWellbeingHome(pseudonymId, meta) {
       data.trend ? el("span", { class: "muted small", text: trendText(data.trend.direction) }) : null,
     ]),
     el("p", { class: "small", style: "margin-top:10px", text: data.risk.description }),
+    data.risk.interval ? el("div", { class: "small muted", text: intervalText(data.risk) }) : null,
+    data.risk.is_borderline ? el("div", { class: "note", text:
+      "Your score sits close to a band boundary. The calibrated range around it crosses into the " +
+      "neighbouring band, so the band shown is provisional rather than settled." }) : null,
+    el("div", { class: "small muted", style: "margin-top:8px", text:
+      data.is_officer_visible
+        ? "Your case is currently visible to a welfare officer so that support can be offered."
+        : "Your case is not visible to a welfare officer. " + (data.visibility_rule || "") }),
   ]);
   root.appendChild(scoreCard);
 

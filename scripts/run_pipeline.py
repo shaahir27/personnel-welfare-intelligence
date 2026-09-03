@@ -38,10 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backend import pipeline  # noqa: E402
 from backend.alerts import alert_rules  # noqa: E402
 from backend.config import settings  # noqa: E402
+from backend.db import access_log  # noqa: E402
 from backend.models import predict  # noqa: E402
 from backend.near_miss import near_miss_detector  # noqa: E402
 from backend.post_model_analytics import (  # noqa: E402
     confidence_engine,
+    escalation,
     individual_vs_systemic,
     risk_classifier,
     trend_engine,
@@ -99,8 +101,13 @@ def main() -> int:
     scored = risk_classifier.classify_frame(scored)
     scored = individual_vs_systemic.classify_frame(scored)
     scored = confidence_engine.compute_confidence_frame(scored)
+    half_width = scorer.interval_half_width
     print(f"     model {scorer.metadata.display_name} ({scorer.metadata.version}); "
-          f"mean score {scored[settings.MODEL_TARGET_NAME].mean():.1f}")
+          f"mean score {scored[settings.MODEL_TARGET_NAME].mean():.1f}; "
+          f"calibrated interval +/-{half_width:.1f} at {scorer.interval_coverage:.0%} coverage"
+          if half_width is not None else
+          f"     model {scorer.metadata.display_name} ({scorer.metadata.version}); "
+          f"mean score {scored[settings.MODEL_TARGET_NAME].mean():.1f}; no calibration block")
 
     print("3/6  Trends, unit aggregates and near-misses ...")
     trends = trend_engine.compute_trends(scored)
@@ -126,13 +133,16 @@ def main() -> int:
         explanations[str(row["pseudonym_id"])] = scorer.explain_row(values).to_dict()
 
     print("5/6  Assembling dashboard payloads ...")
+    near_miss_units = {n.unit_id for n in near_misses}
     cases: List[Dict[str, object]] = []
     for _, row in latest.iterrows():
         pid = str(row["pseudonym_id"])
         score = float(row[settings.MODEL_TARGET_NAME])
         unit = aggregates.get(str(row["unit_id"]))
         attribution = individual_vs_systemic.classify_attribution(score, unit)
-        classification = risk_classifier.classify_score(score)
+        classification = risk_classifier.classify_score(
+            score, half_width=half_width, coverage=scorer.interval_coverage
+        )
         trend = trends.get(pid)
         cases.append(
             {
@@ -153,9 +163,13 @@ def main() -> int:
                     name: round(float(row[name]), 1) for name in scorer.feature_names
                 },
                 "has_voice_signal": bool(row[settings.VOICE_PRESENCE_FLAG_NAME] > 0),
-                "unit_near_miss": str(row["unit_id"]) in {n.unit_id for n in near_misses},
+                "unit_near_miss": str(row["unit_id"]) in near_miss_units,
             }
         )
+        # The escalation decision is a function of level, persistence and
+        # trend, all of which are now known; record it so a reader of the
+        # payload does not have to re-derive the rule.
+        cases[-1]["is_officer_visible"] = escalation.is_officer_visible(cases[-1])
 
     # Add pre-computed recommendations to every case. done after the list is
     # fully built so recommend_from_case can read contributing_factors if they
@@ -185,10 +199,15 @@ def main() -> int:
     for unit_id, aggregate in sorted(aggregates.items()):
         entry = aggregate.to_dict()
         entry["near_miss_pressure"] = pressure.get(unit_id)
-        entry["is_near_miss"] = unit_id in {n.unit_id for n in near_misses}
+        entry["is_near_miss"] = unit_id in near_miss_units
         units_payload.append(entry)
 
     band_counts = risk_classifier.band_distribution(latest)
+    certainty_counts = {
+        level: sum(1 for c in cases if c["risk"].get("band_certainty") == level)
+        for level in risk_classifier.BAND_CERTAINTY_LEVELS
+    }
+    officer_visible_count = sum(1 for c in cases if c["is_officer_visible"])
 
     meta = {
         "generated_at": pd.Timestamp.now("UTC").isoformat(),
@@ -212,9 +231,18 @@ def main() -> int:
             "min_unit_size_for_aggregate": settings.MIN_UNIT_SIZE_FOR_AGGREGATE,
         },
         "band_distribution": band_counts,
+        "band_certainty": certainty_counts,
+        "officer_visible_count": officer_visible_count,
+        "escalation_rule": escalation.visibility_rule_text(),
+        "conformal": scorer.metadata.conformal,
+        "deployed_metrics": scorer.metadata.deployed_metrics,
         "signal_labels": settings.SIGNAL_HUMAN_LABELS,
         "explained_case_count": len(explanations),
     }
+
+    purged = access_log.purge_expired()
+    if purged:
+        print(f"     access log: {purged} row(s) past retention removed")
 
     print("6/7  Generating alert batch ...")
     alert_batch = alert_rules.generate_alert_batch(
@@ -238,6 +266,7 @@ def main() -> int:
         print(f"     {path}  ({path.stat().st_size / 1024:.0f} KB)")
 
     print(f"\nBand distribution at {pd.Timestamp(latest_date).date()}: {band_counts}")
+    print(f"Band certainty: {certainty_counts}; officer-visible: {officer_visible_count} of {len(cases)}")
     if near_misses:
         print("\nNear-miss findings:")
         for finding in near_misses:

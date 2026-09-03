@@ -111,6 +111,6 @@ export async function renderVoiceCheckIn(pseudonymId) {
   root.appendChild(el("div", { class: "note", text:
     "Answers are stored against your own record. They are not shown to your commander, " +
     "a welfare officer sees them only if you ask for support, and they do not affect " +
-    "your indicator score — the eight indicators come from HR records alone." }));
+    "your indicator score — the nine indicators come from HR records alone." }));
   return root;
 }

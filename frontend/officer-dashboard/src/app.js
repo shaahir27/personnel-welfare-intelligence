@@ -51,7 +51,7 @@ async function render() {
   try {
     let node;
     if (state.screen === "queue") node = await renderWelfareQueue(go);
-    else if (state.screen === "case") node = await renderCaseDetail(state.caseId, go);
+    else if (state.screen === "case") node = await renderCaseDetail(state.caseId, go, state.meta);
     else if (state.screen === "whatif") node = await renderWhatIfSimulator(state.caseId, state.meta);
     else node = await renderCommanderUnitView();
     clear(container);

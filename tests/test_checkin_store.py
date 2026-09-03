@@ -73,6 +73,45 @@ class TestValidation(CheckinStoreTestCase):
         with self.assertRaises(InvalidSubmission):
             record_submission("PSN001", answers, path=self.path)
 
+    def test_question_outside_the_bank_is_rejected(self) -> None:
+        with self.assertRaises(InvalidSubmission):
+            record_submission(
+                "PSN001", [{"question_id": "NOT_A_QUESTION", "value": 2}], path=self.path
+            )
+
+    def test_free_text_to_a_scale_question_is_rejected(self) -> None:
+        with self.assertRaises(InvalidSubmission):
+            record_submission(
+                "PSN001", [{"question_id": "GEN01", "text": "fine"}], path=self.path
+            )
+
+    def test_scale_value_to_a_free_text_question_is_rejected(self) -> None:
+        with self.assertRaises(InvalidSubmission):
+            record_submission(
+                "PSN001", [{"question_id": "GEN03", "value": 2}], path=self.path
+            )
+
+    def test_the_same_question_twice_in_one_submission_is_rejected(self) -> None:
+        with self.assertRaises(InvalidSubmission):
+            record_submission(
+                "PSN001",
+                [{"question_id": "GEN01", "value": 1}, {"question_id": "GEN01", "value": 3}],
+                path=self.path,
+            )
+
+    def test_every_bank_question_is_accepted_with_its_own_kind(self) -> None:
+        from backend.api.checkin_store import KIND_SCALE, question_kinds
+
+        answers = [
+            {"question_id": qid, ("value" if kind == KIND_SCALE else "text"): (2 if kind == KIND_SCALE else "a note")}
+            for qid, kind in question_kinds().items()
+        ]
+        # Submit in chunks under the per-submission cap.
+        for start in range(0, len(answers), MAX_ANSWERS_PER_SUBMISSION):
+            record_submission("PSN001", answers[start:start + MAX_ANSWERS_PER_SUBMISSION], path=self.path)
+        stored = submissions_for("PSN001", path=self.path)
+        self.assertEqual(sum(len(r["answers"]) for r in stored), len(answers))
+
     def test_a_rejected_submission_writes_nothing(self) -> None:
         with self.assertRaises(InvalidSubmission):
             record_submission(

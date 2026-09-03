@@ -62,9 +62,35 @@ class ApiRouteTestCase(unittest.TestCase):
         # client is unavailable and the whole class is skipped.
         from backend.api.main import build_app
 
+        # The routes write to the record-access log; point it at scratch so a
+        # test run leaves no trace on the real one.
+        cls._log_tmp = tempfile.TemporaryDirectory()
+        cls._log_patch = mock.patch.object(
+            settings, "ACCESS_LOG_DB_PATH", Path(cls._log_tmp.name) / "access_log.sqlite3"
+        )
+        cls._log_patch.start()
+
         cls.client = TestClient(build_app())
         first = cls.client.get("/api/demo/identities").json()["identities"][0]
         cls.pseudonym_id = first["pseudonym_id"]
+        cls.store = cls.client.app.state.store
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._log_patch.stop()
+        cls._log_tmp.cleanup()
+
+    def visible_case(self) -> str:
+        """Return the pseudonym of a case the escalation rule admits."""
+        from backend.post_model_analytics import escalation
+
+        return next(c["pseudonym_id"] for c in self.store.cases if escalation.is_officer_visible(c))
+
+    def hidden_case(self) -> str:
+        """Return the pseudonym of a case the escalation rule does not admit."""
+        from backend.post_model_analytics import escalation
+
+        return next(c["pseudonym_id"] for c in self.store.cases if not escalation.is_officer_visible(c))
 
     def sign_in(self, account: dict, subject: str | None = None) -> str:
         """Log in and return the token.
@@ -188,6 +214,175 @@ class TestPersonalRouteScope(ApiRouteTestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class TestOfficerScopeOnPersonalRoutes(ApiRouteTestCase):
+    """Regression: an officer could read any person's summary, history and
+    notifications, queue or no queue.
+
+    ``require_self`` constrains a personnel principal and passes every other
+    role through; these routes never applied the escalation gate that
+    ``officer.case_detail`` applies. The gate is now shared.
+    """
+
+    def test_officer_cannot_read_a_hidden_persons_record(self) -> None:
+        token = self.sign_in(OFFICER)
+        hidden = self.hidden_case()
+        for suffix in ("summary", "history", "notifications"):
+            with self.subTest(route=suffix):
+                response = self.client.get(
+                    f"/api/personal/{hidden}/{suffix}", headers=_bearer(token)
+                )
+                self.assertEqual(response.status_code, 403, response.text)
+
+    def test_officer_can_read_a_visible_persons_record(self) -> None:
+        token = self.sign_in(OFFICER)
+        visible = self.visible_case()
+        for suffix in ("summary", "history", "notifications"):
+            with self.subTest(route=suffix):
+                response = self.client.get(
+                    f"/api/personal/{visible}/{suffix}", headers=_bearer(token)
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+
+    def test_hidden_person_can_still_read_their_own_record(self) -> None:
+        hidden = self.hidden_case()
+        token = self.sign_in(PERSONNEL, hidden)
+        response = self.client.get(f"/api/personal/{hidden}/summary", headers=_bearer(token))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["is_officer_visible"])
+
+    def test_officer_reads_are_written_to_the_access_log(self) -> None:
+        from backend.db import access_log
+
+        token = self.sign_in(OFFICER)
+        hidden, visible = self.hidden_case(), self.visible_case()
+        self.client.get(f"/api/personal/{hidden}/summary", headers=_bearer(token))
+        self.client.get(f"/api/officer/case/{visible}", headers=_bearer(token))
+        self.assertGreaterEqual(access_log.access_summary(hidden)["total_refused"], 1)
+        self.assertGreaterEqual(access_log.access_summary(visible)["by_role"].get("welfare_officer", 0), 1)
+
+    def test_individual_sees_access_counts_but_not_who(self) -> None:
+        visible = self.visible_case()
+        self.client.get(f"/api/officer/case/{visible}", headers=_bearer(self.sign_in(OFFICER)))
+        token = self.sign_in(PERSONNEL, visible)
+        privacy = self.client.get(f"/api/personal/{visible}/privacy", headers=_bearer(token)).json()
+        record = privacy["record_access"]
+        self.assertGreaterEqual(record["by_role"].get("welfare_officer", 0), 1)
+        self.assertNotIn("WO-DEMO-01", str(record))
+
+    def test_privacy_route_404s_for_an_unknown_person(self) -> None:
+        token = self.sign_in(PERSONNEL, "PSNnobody")
+        response = self.client.get("/api/personal/PSNnobody/privacy", headers=_bearer(token))
+        self.assertEqual(response.status_code, 404)
+
+
+class TestWhatIfValidation(ApiRouteTestCase):
+    """Malformed what-if requests are 400s, never tracebacks or nonsense."""
+
+    def setUp(self) -> None:
+        self.token = self.sign_in(OFFICER)
+        self.case_id = self.visible_case()
+
+    def _post(self, body) -> object:
+        return self.client.post("/api/officer/what-if", json=body, headers=_bearer(self.token))
+
+    def test_valid_request_returns_projection_with_intervals(self) -> None:
+        response = self._post({"pseudonym_id": self.case_id, "adjustments": {"leave_deficit_signal": 0}})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["is_illustrative"])
+        self.assertIn("projected_interval", body)
+        self.assertIn("current_interval", body)
+        if body["projected_interval"]:
+            self.assertLessEqual(body["projected_interval"]["low"], body["projected_score"])
+
+    def test_array_body_is_a_400(self) -> None:
+        response = self.client.post(
+            "/api/officer/what-if", content=b"[1,2]",
+            headers={**_bearer(self.token), "Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_json_body_is_a_400(self) -> None:
+        response = self.client.post(
+            "/api/officer/what-if", content=b"not json",
+            headers={**_bearer(self.token), "Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_unknown_or_voice_signal_is_refused(self) -> None:
+        for name in ("made_up", settings.VOICE_PRESENCE_FLAG_NAME, settings.VOICE_SIGNAL_NAME):
+            with self.subTest(name=name):
+                response = self._post({"pseudonym_id": self.case_id, "adjustments": {name: 10}})
+                self.assertEqual(response.status_code, 400)
+
+    def test_out_of_scale_and_non_numeric_values_are_refused(self) -> None:
+        for value in (1e9, -1, "12", None):
+            with self.subTest(value=value):
+                response = self._post(
+                    {"pseudonym_id": self.case_id, "adjustments": {"workload_deviation_signal": value}}
+                )
+                self.assertEqual(response.status_code, 400)
+
+    def test_hidden_case_is_refused(self) -> None:
+        response = self._post({"pseudonym_id": self.hidden_case(), "adjustments": {}})
+        self.assertEqual(response.status_code, 403)
+
+    def test_missing_pseudonym_is_a_400(self) -> None:
+        self.assertEqual(self._post({"adjustments": {}}).status_code, 400)
+
+
+class TestLoginValidation(ApiRouteTestCase):
+
+    def test_array_body_is_a_400(self) -> None:
+        response = self.client.post(
+            "/api/auth/login", content=b"[]", headers={"Content-Type": "application/json"}
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_string_password_is_a_400(self) -> None:
+        response = self.client.post("/api/auth/login", json={"username": "officer", "password": 5})
+        self.assertEqual(response.status_code, 400)
+
+
+class TestCalibratedIntervalsReachTheWire(ApiRouteTestCase):
+    """The novelty has to be visible on both screens to be worth having."""
+
+    def test_meta_carries_the_calibration_block(self) -> None:
+        meta = self.client.get("/api/meta").json()
+        self.assertIsNotNone(meta.get("conformal"), "pipeline output predates calibration; re-run it")
+        self.assertGreater(meta["conformal"]["half_width"], 0)
+        self.assertIn("escalation_rule", meta)
+
+    def test_queue_rows_carry_band_certainty(self) -> None:
+        token = self.sign_in(OFFICER)
+        queue = self.client.get("/api/officer/queue", headers=_bearer(token)).json()
+        self.assertTrue(queue["cases"])
+        self.assertIn("borderline_count", queue)
+        for row in queue["cases"][:5]:
+            self.assertIn(row["band_certainty"], ("certain", "borderline"))
+            self.assertIsNotNone(row["interval"])
+
+    def test_queue_is_exactly_the_escalation_rule(self) -> None:
+        from backend.post_model_analytics import escalation
+
+        token = self.sign_in(OFFICER)
+        queue = self.client.get("/api/officer/queue", headers=_bearer(token)).json()
+        expected = {c["pseudonym_id"] for c in self.store.cases if escalation.is_officer_visible(c)}
+        self.assertEqual({row["pseudonym_id"] for row in queue["cases"]}, expected)
+
+    def test_personal_summary_carries_the_range(self) -> None:
+        token = self.sign_in(PERSONNEL, self.pseudonym_id)
+        body = self.client.get(f"/api/personal/{self.pseudonym_id}/summary", headers=_bearer(token)).json()
+        self.assertIsNotNone(body["risk"]["interval"])
+        self.assertIn(body["risk"]["band_certainty"], ("certain", "borderline"))
+        self.assertIn("visibility_rule", body)
+
+    def test_commander_near_miss_alerts_carry_a_date(self) -> None:
+        alerts = self.store.alerts["by_recipient"][settings.ROLE_COMMANDER]
+        for alert in alerts:
+            self.assertTrue(alert["snapshot_date"], "commander alert has no snapshot date")
+
+
 class TestCheckInSubmission(ApiRouteTestCase):
     """POST /api/personal/{id}/check-in stores answers for the person only."""
 
@@ -227,6 +422,21 @@ class TestCheckInSubmission(ApiRouteTestCase):
             f"/api/personal/{self.pseudonym_id}/check-in",
             json={"answers": [{"question_id": "GEN01", "value": 9}]},
             headers=_bearer(self.token),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_question_outside_the_bank_is_refused(self) -> None:
+        response = self.client.post(
+            f"/api/personal/{self.pseudonym_id}/check-in",
+            json={"answers": [{"question_id": "NOT_IN_BANK", "value": 3}]},
+            headers=_bearer(self.token),
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_array_body_is_a_400(self) -> None:
+        response = self.client.post(
+            f"/api/personal/{self.pseudonym_id}/check-in", content=b"[]",
+            headers={**_bearer(self.token), "Content-Type": "application/json"},
         )
         self.assertEqual(response.status_code, 400)
 

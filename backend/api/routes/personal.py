@@ -6,6 +6,14 @@ Every handler here goes through ``require_self``, so a personnel principal can
 only ever read their own pseudonym's data. There is no route in this module
 that takes a different person's id and returns anything.
 
+A welfare officer may call the summary, history and notification routes, but
+only for a case the escalation rule has made visible to them -- the same gate
+``officer.case_detail`` applies. ``require_self`` does not enforce that: it
+constrains a *personnel* principal and passes every other role through. Until
+this gate existed, these three routes returned any of the 800 records to an
+officer, including the several hundred that were never in the queue. Every
+officer read here is written to the access log, granted or refused.
+
 What a person sees about themselves is deliberately *more* than what a welfare
 officer sees about them, not less: their own contributing factors in full, their
 own history, and the plain statement of what data the system holds. A system
@@ -15,7 +23,6 @@ should be asked to trust.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,10 +30,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from backend.api import checkin_store
+from backend.api import checkin_store, request_parsing
 from backend.api.store import ProcessedStore
 from backend.auth import rbac
 from backend.config import settings
+from backend.db import access_log
+from backend.post_model_analytics import escalation
 
 QUESTIONS_PATH = Path(__file__).resolve().parent.parent / "wellness_questions.json"
 
@@ -42,6 +51,51 @@ def _load_questions() -> Dict[str, Any]:
         The parsed question bank.
     """
     return json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
+
+
+def _officer_gate(
+    principal: rbac.Principal, store: ProcessedStore, pseudonym_id: str, action: str
+) -> JSONResponse | None:
+    """Apply the escalation gate when an officer reads a personal route.
+
+    Args:
+        principal: The acting principal.
+        store: The processed store.
+        pseudonym_id: The record requested.
+        action: The ``access_log`` action name for this route.
+
+    Returns:
+        None when the caller may proceed. A 403 response when the caller is
+        an officer and the case is not officer-visible. Personnel reading
+        their own record pass straight through (``require_self`` has already
+        run) and are not logged as third-party access.
+
+    Note:
+        Refusals are logged as well as grants: a run of refused reads on one
+        record is what an access log exists to show.
+    """
+    if not principal.is_welfare_officer:
+        return None
+    case = store.cases_by_id.get(pseudonym_id)
+    visible = case is not None and escalation.is_officer_visible(case)
+    access_log.record_access(
+        actor_role=principal.role,
+        actor_subject=principal.subject,
+        action=action,
+        pseudonym_id=pseudonym_id,
+        outcome=access_log.OUTCOME_GRANTED if visible else access_log.OUTCOME_REFUSED,
+    )
+    if visible:
+        return None
+    return JSONResponse(
+        {
+            "detail": (
+                "This case has not met the escalation threshold, so it is not "
+                "available at officer level."
+            )
+        },
+        status_code=403,
+    )
 
 
 def build_personal_summary(
@@ -76,6 +130,9 @@ def build_personal_summary(
         "confidence": case["confidence"],
         "signals": case["signals"],
         "signal_labels": store.meta.get("signal_labels", {}),
+        "thresholds": store.meta.get("thresholds", {}),
+        "is_officer_visible": escalation.is_officer_visible(case),
+        "visibility_rule": escalation.visibility_rule_text(),
         "has_voice_signal": case["has_voice_signal"],
         "contributing_factors": (
             explanation["top_factors"] if explanation else None
@@ -98,6 +155,9 @@ async def summary(request: Request) -> JSONResponse:
     rbac.require_self(principal, pseudonym_id)
 
     store: ProcessedStore = request.app.state.store
+    refused = _officer_gate(principal, store, pseudonym_id, access_log.ACTION_VIEW_SUMMARY)
+    if refused is not None:
+        return refused
     payload = build_personal_summary(store, pseudonym_id)
     if payload is None:
         return JSONResponse({"detail": "no welfare record found"}, status_code=404)
@@ -112,6 +172,11 @@ async def history(request: Request) -> JSONResponse:
     rbac.require_self(principal, pseudonym_id)
 
     store: ProcessedStore = request.app.state.store
+    refused = _officer_gate(principal, store, pseudonym_id, access_log.ACTION_VIEW_HISTORY)
+    if refused is not None:
+        return refused
+    if pseudonym_id not in store.cases_by_id:
+        return JSONResponse({"detail": "no welfare record found"}, status_code=404)
     return JSONResponse(
         {
             "pseudonym_id": pseudonym_id,
@@ -188,7 +253,7 @@ async def submit_check_in(request: Request) -> JSONResponse:
 
     Answers are written to an append-only store (``backend/api/checkin_store``)
     and are read back only by the person who wrote them. Nothing here feeds the
-    scoring path: the eight behavioral signals come from HR records alone, so
+    scoring path: the nine behavioral signals come from HR records alone, so
     answering, or not answering, cannot move anybody's risk score. That is what
     makes the "entirely optional" line on the check-in screen true rather than
     reassuring.
@@ -199,16 +264,10 @@ async def submit_check_in(request: Request) -> JSONResponse:
     rbac.require_self(principal, pseudonym_id)
 
     try:
-        body = await request.json()
-    except (ValueError, json.JSONDecodeError):
-        return JSONResponse({"detail": "request body must be JSON"}, status_code=400)
-
-    try:
-        record = checkin_store.record_submission(
-            pseudonym_id, body.get("answers", [])
-        )
-    except checkin_store.InvalidSubmission as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=400)
+        body = await request_parsing.read_json_object(request)
+        record = checkin_store.record_submission(pseudonym_id, body.get("answers", []))
+    except (request_parsing.InvalidRequest, checkin_store.InvalidSubmission) as exc:
+        return request_parsing.bad_request(exc)
 
     return JSONResponse(
         {
@@ -240,7 +299,11 @@ async def privacy(request: Request) -> JSONResponse:
     rbac.require_self(principal, pseudonym_id)
 
     store: ProcessedStore = request.app.state.store
-    case = store.cases_by_id.get(pseudonym_id, {})
+    case = store.cases_by_id.get(pseudonym_id)
+    if case is None:
+        return JSONResponse({"detail": "no welfare record found"}, status_code=404)
+    officer_visibility = escalation.visibility_summary_for_individual()
+    accesses = access_log.access_summary(pseudonym_id)
 
     return JSONResponse(
         {
@@ -257,8 +320,8 @@ async def privacy(request: Request) -> JSONResponse:
                     "examples": "leave, duty hours, deployments, transfers, training",
                     "voluntary": False,
                     "source": "your unit's HR system",
-                    "used_for": "computing the eight behavioral indicators",
-                    "visible_to": "you; a welfare officer only if your level is High",
+                    "used_for": "computing the nine behavioral indicators",
+                    "visible_to": officer_visibility,
                     "retention_days": settings.RETENTION_HR_FEATURES_DAYS,
                 },
                 {
@@ -291,8 +354,17 @@ async def privacy(request: Request) -> JSONResponse:
                     "voluntary": False,
                     "source": "computed from your HR indicators",
                     "used_for": "offering welfare support early",
-                    "visible_to": "you; a welfare officer only if your level is High",
+                    "visible_to": officer_visibility,
                     "retention_days": settings.RETENTION_RISK_SCORES_DAYS,
+                },
+                {
+                    "category": "Record-access log",
+                    "examples": "which role opened your record, when, and whether it was allowed",
+                    "voluntary": False,
+                    "source": "written by the server whenever an officer opens your case",
+                    "used_for": "oversight -- so it can be shown that access to your record is recorded",
+                    "visible_to": "you, as counts and dates; auditors, in full",
+                    "retention_days": settings.RETENTION_ACCESS_LOG_DAYS,
                 },
             ],
             "who_sees_what": [
@@ -303,8 +375,8 @@ async def privacy(request: Request) -> JSONResponse:
                 },
                 {
                     "role": "Welfare officer",
-                    "sees": "Your case only when your level is High, or Moderate "
-                            "for a sustained period. They see the contributing "
+                    "sees": escalation.visibility_rule_text()
+                            + " When your case is visible they see the contributing "
                             "factors and the recommended support -- not your "
                             "recordings and not your answers.",
                 },
@@ -317,7 +389,17 @@ async def privacy(request: Request) -> JSONResponse:
             ],
             "current_visibility": {
                 "level": case.get("risk", {}).get("level"),
-                "is_officer_visible": case.get("risk", {}).get("is_officer_visible", False),
+                "is_officer_visible": escalation.is_officer_visible(case),
+                "rule": escalation.visibility_rule_text(),
+            },
+            "record_access": {
+                **accesses,
+                "note": (
+                    "Every time an officer opens your record the server writes "
+                    "who (by role), when and whether it was allowed. You can see "
+                    "that it happened; the identity of the officer is held for "
+                    "oversight, not shown here."
+                ),
             },
             "your_choices": [
                 {
@@ -351,7 +433,8 @@ async def notifications(request: Request) -> JSONResponse:
     nothing is generated at request time.
 
     Personnel may only read their own notifications. Officers may also call
-    this route (scoped to their queue); commanders may not.
+    this route, but only for a case the escalation rule has made visible to
+    them; commanders may not call it at all.
 
     Note:
         ``require_role`` is not optional here. ``require_self`` alone does not
@@ -367,6 +450,9 @@ async def notifications(request: Request) -> JSONResponse:
     rbac.require_self(principal, pseudonym_id)
 
     store: ProcessedStore = request.app.state.store
+    refused = _officer_gate(principal, store, pseudonym_id, access_log.ACTION_VIEW_NOTIFICATIONS)
+    if refused is not None:
+        return refused
     by_pseudonym = store.alerts.get("by_pseudonym", {})
     person_alerts = by_pseudonym.get(pseudonym_id, [])
 

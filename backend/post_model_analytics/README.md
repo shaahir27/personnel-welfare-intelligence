@@ -8,21 +8,24 @@ responsibly.
 
 | File | Job |
 | --- | --- |
-| `risk_classifier.py` | Score → Normal / Moderate / High. |
+| `risk_classifier.py` | Score → Normal / Moderate / High, plus the calibrated range around the score and whether the band is *certain* or *borderline*. |
 | `trend_engine.py` | Score history → direction + persistence. |
 | `confidence_engine.py` | How much data the score rests on. |
 | `individual_vs_systemic.py` | Is this the person, or their unit? |
+| `escalation.py` | The one definition of "may a welfare officer see this case". |
 
 ## Inputs and outputs
 
 **In:** the scored signal frame from `models/predict` — `pseudonym_id`,
-`snapshot_date`, `unit_id`, the eight signals, and `welfare_risk_score`.
+`snapshot_date`, `unit_id`, the nine signals, and `welfare_risk_score`.
 
 **Out:**
 
 | Function | Returns |
 | --- | --- |
-| `risk_classifier.classify_score(score)` | `RiskClassification` — level, non-judgemental description, distance to next band, officer-visibility flag |
+| `risk_classifier.classify_score(score, half_width, coverage)` | `RiskClassification` — level, non-judgemental description, distance to both neighbouring bands, calibrated `interval`, `bands_plausible`, `band_certainty` (`certain` / `borderline`) |
+| `escalation.is_officer_visible(case)` | bool — High, or persistent Moderate that is Rising (`settings.ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING`) |
+| `escalation.visibility_rule_text()` | the rule as a sentence, generated from the settings in force |
 | `risk_classifier.classify_frame(df)` | frame + `risk_level` |
 | `trend_engine.compute_trends(df)` | `{pseudonym_id: TrendResult}` — direction, slope per 30 days, persistence count |
 | `confidence_engine.compute_confidence_frame(df)` | frame + `confidence`, `confidence_level` |
@@ -77,6 +80,52 @@ reading precisely so one difficult month does not put someone in front of an
 officer.
 
 The slope describes what has already happened. **Nothing here forecasts.**
+
+### The calibrated range is the statistical statement; confidence is the data statement
+
+Two different questions get two different answers, and the payload keeps them
+apart:
+
+- **How much data does this score rest on?** — `confidence_engine`, a
+  completeness heuristic (next section).
+- **How far is the model typically wrong?** — the `interval` on the risk
+  block, a **split conformal prediction interval** calibrated in
+  `backend/models/conformal.py` on training people the deployed model never
+  saw, and verified on the test people. Coverage is guaranteed in finite
+  samples with no assumption about the model or the error distribution
+  (Vovk et al. 2005; Lei et al. 2018; Angelopoulos & Bates 2021).
+
+`classify_score` uses the range to decide **band certainty**: when the range
+sits inside one band the band is `certain`; when it crosses a cutoff the band
+is `borderline` and the payload says which bands are plausible. A borderline
+High is still High — the point score is the best estimate and the case is
+still escalated — but every screen, and the officer alert, say the band is
+provisional. That is PS technical challenge #3 (false positives and negatives)
+made concrete: "66, borderline" and "84, certain" no longer look the same.
+
+What the range is honest about: coverage is with respect to the label the
+model was trained on. On the synthetic corpus that label is the generator's
+formula plus injected noise, so the range quantifies model error against that
+label — it is not validation against real welfare outcomes, and it says so in
+`meta.conformal.note`.
+
+### Escalation is one rule, imported everywhere
+
+`escalation.py` is the only place the officer-visibility rule is written. The
+officer queue, the case-detail gate, the personal routes an officer may call,
+the persistent-Moderate alert, and the Privacy Centre's "who sees what" text
+all import it. Before this module the rule was restated in two places and
+omitted from three, and the omission let an officer read the summary, history
+and notifications of anyone in the force.
+
+The rule itself: High, or Moderate that has persisted for
+`TREND_PERSISTENCE_SNAPSHOTS` snapshots **and is Rising**. The rising
+requirement is a setting with its measurement recorded beside it: without it
+619 of 800 synthetic personnel were officer-visible; with it, 159 on the current run
+(the exact count moves with retraining and is in `meta.officer_visible_count`). A stable
+Moderate pattern across a unit is a condition, and the aggregates and the
+near-miss detector show it to a commander as one; a rising individual
+trajectory is what escalation is for.
 
 ### Confidence is a completeness heuristic, and says so in its own payload
 

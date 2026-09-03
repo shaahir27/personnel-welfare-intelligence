@@ -6,8 +6,11 @@ One job, one invocation:
 
 It builds the behavioral signals, makes one person-disjoint train/test split,
 fits every candidate on that identical split, scores them, applies the written
-selection rule, refits the winner on all the data, and writes it to the model
-registry with full metadata.
+selection rule, and then produces the *deployed* artefact: the winner refitted
+on a fit slice of the training people, calibrated by split conformal
+prediction on the remaining training people it never saw, with the calibration
+verified on the test people, and written to the model registry with full
+metadata (``backend/models/conformal.py`` says what the guarantee means).
 
 Re-running it after the dataset changes is this single command -- there is no
 manual notebook step anywhere in the path.
@@ -30,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend import pipeline  # noqa: E402
 from backend.config import settings  # noqa: E402
-from backend.models import model_registry, model_selection, train  # noqa: E402
+from backend.models import conformal, model_registry, model_selection, train  # noqa: E402
 from ml.evaluation import metrics as metrics_module  # noqa: E402
 
 
@@ -75,8 +78,40 @@ def main(run_cross_validation: bool = False) -> int:
     print(f"\nSelected: {selection.selected.spec.display_name}")
     print(f"Reason:   {selection.reason}")
 
-    print("\nRefitting the selected model on all rows ...")
-    final_estimator = train.refit_on_all_data(selection.selected.spec, features, target)
+    print("\nFitting the deployed model and calibrating its intervals ...")
+    carve = train.carve_calibration(split)
+    print(f"  {carve.summary()}")
+    final_estimator = train.fit_for_deployment(selection.selected.spec, carve.x_fit, carve.y_fit)
+
+    calibration = conformal.calibrate(
+        y_true=carve.y_calibration,
+        y_pred=final_estimator.predict(carve.x_calibration),
+        calibration_people=carve.calibration_people,
+    )
+    test_predictions = final_estimator.predict(split.x_test)
+    verified_coverage = conformal.empirical_coverage(
+        split.y_test, test_predictions, calibration.half_width
+    )
+    deployed_metrics = metrics_module.all_metrics(split.y_test, test_predictions)
+    conformal_block = {
+        **calibration.to_dict(),
+        "verified_on_test_rows": int(len(split.y_test)),
+        "verified_on_test_people": split.test_people,
+        "empirical_test_coverage": round(verified_coverage, 4),
+        "note": (
+            "Coverage is with respect to the label the model was trained on. "
+            "On the synthetic corpus that label is the generator's formula plus "
+            "injected noise; the interval quantifies model error against that "
+            "label and is not validation against real welfare outcomes."
+        ),
+    }
+    print(f"  half-width +/-{calibration.half_width:.2f} points at "
+          f"{calibration.coverage:.0%} target coverage "
+          f"(rank {calibration.quantile_rank} of {calibration.calibration_rows})")
+    print(f"  verified coverage on {split.test_people} unseen test people: "
+          f"{verified_coverage:.1%}")
+    print(f"  deployed model on test: R2 {deployed_metrics['r2']:.3f}, "
+          f"MAE {deployed_metrics['mae']:.2f}")
 
     version_dir = model_registry.save(
         estimator=final_estimator,
@@ -85,8 +120,10 @@ def main(run_cross_validation: bool = False) -> int:
         is_tree_based=selection.selected.spec.is_tree_based,
         metrics=selection.selected.metrics,
         selection_reason=selection.reason,
-        training_rows=len(features),
-        training_people=int(groups.nunique()),
+        training_rows=int(len(carve.y_fit)),
+        training_people=carve.fit_people,
+        conformal=conformal_block,
+        deployed_metrics=deployed_metrics,
     )
     print(f"Registered: {version_dir}")
 
@@ -101,6 +138,14 @@ def main(run_cross_validation: bool = False) -> int:
         },
         "selected_model": selection.selected.spec.name,
         "selection_reason": selection.reason,
+        "deployed": {
+            "fit_rows": int(len(carve.y_fit)),
+            "fit_people": carve.fit_people,
+            "calibration_rows": calibration.calibration_rows,
+            "calibration_people": calibration.calibration_people,
+            "conformal": conformal_block,
+            "test_metrics": {k: round(v, 4) for k, v in deployed_metrics.items()},
+        },
         "candidates": [
             {
                 "name": c.spec.name,

@@ -30,7 +30,7 @@ python scripts/train_models.py --quick        # use --cv for grouped cross-valid
 # 3. Score all personnel, explain every case, generate recommendations & alerts (~6 min)
 python scripts/run_pipeline.py
 
-# 4. Run the automated test suite (134 passing unit tests)
+# 4. Run the automated test suite (211 passing unit tests)
 python -m unittest discover -s tests
 
 # 5. Serve the REST API and both frontends
@@ -76,12 +76,14 @@ deployment replaces.
 
 ## 🏛️ Core Architecture & Highlights
 
-1. **Zero LLM / Generative AI Path:** All scoring uses verified scikit-learn models (Gradient Boosting, $R^2 = 0.807$), explanations use exact Shapley value enumeration ($2^{11}=2048$ coalitions), and recommendations use a deterministic rule-based mapping engine.
+1. **Zero LLM / Generative AI Path:** All scoring uses verified scikit-learn models (Gradient Boosting, $R^2 = 0.821$ on a person-disjoint held-out set), explanations use exact Shapley value enumeration ($2^{11}=2048$ coalitions), and recommendations use a deterministic rule-based mapping engine.
 2. **Acoustic-Only Voice Pipeline:** Analyzes pitch ($F_0$), speaking rate, pause ratios, jitter, and shimmer. **Zero speech-to-text / transcription** exists by construction.
 3. **Strict Privacy & Data Separation:** Direct identifiers are HMAC-SHA256 pseudonymized. Identity mapping is isolated in `data/identity_map.sqlite3` with an audited re-identification log. That file is **not committed** — it holds both the mapping and the salt that produced it, so a copy in the repository would undo the pseudonymisation for anyone who cloned it. It is created on the first pipeline run.
 4. **Structural Leak Prevention:** The commander view cannot receive individual-identifiable records — enforced by `rbac.assert_commander_safe()` recursive payload scanning and proved by `tests/test_rbac_api.py`.
 5. **Graduated Alerting & Recommendations:** 3-tier notification system (Personal, Officer, Commander) and 8 pre-approved operational welfare interventions, both surfaced on the screens that act on them. What a person is told about themselves and what an officer is told about that person are separate feeds, by construction.
 6. **JWT Authentication:** HS256 issued by `POST /api/auth/login` against PBKDF2 credential hashes, verified on every role-scoped route. Both frontends hold tokens; the plain role header is off unless `PWIEWS_DEBUG_AUTH=1`.
+7. **Calibrated Risk Intervals (split conformal prediction):** every score carries a range with a finite-sample coverage guarantee — ±9.9 points at 90% target coverage, verified at 91.5% on people the deployed model never saw. When the range crosses a band cutoff the case is marked **borderline** on every screen and in the officer alert, which is the concrete answer to PS technical challenge #3 (false positives / negatives). `backend/models/conformal.py`, `docs/model_comparison_report.md` §5a.
+8. **One Escalation Rule, Recorded Access:** who a welfare officer may see is defined once (`backend/post_model_analytics/escalation.py`: High, or persistent Moderate that is rising — 159 of 800 cases on this corpus, down from 619) and imported by the queue, the alert rules and the personal routes. Every officer open of a record is written to an access log (`backend/db/access_log.py`), and the individual sees the counts in their Privacy Centre.
 
 ---
 
@@ -97,13 +99,14 @@ personnel-welfare-intelligence/
 │   ├── feature_engineering/     ← 14 point-in-time features, rolling windows, personal baselines
 │   ├── behavioral_engine/       ← 9 normalized (0–100) behavioral stress signals
 │   ├── voice_pipeline/          ← Acoustic DSP feature extraction (no speech transcription)
-│   ├── models/                  ← 8 candidate models, person-disjoint training, selection, exact SHAP
-│   ├── post_model_analytics/    ← Risk bands, trend persistence, confidence heuristics, attribution
+│   ├── models/                  ← 8 candidate models, person-disjoint training, selection, conformal calibration, exact SHAP
+│   ├── post_model_analytics/    ← Risk bands + calibrated intervals, trend persistence, confidence heuristics, attribution, the escalation rule
 │   ├── near_miss/               ← Unit-level organizational condition detection
 │   ├── recommendation_engine/   ← 8 pre-approved interventions & rule-based action mapper
 │   ├── alerts/                  ← Graduated 3-tier notification generator
 │   ├── auth/                    ← RBAC, commander payload guard, JWT, credential store
-│   └── api/                     ← Starlette REST API, route handlers, check-in store
+│   ├── db/                      ← Record-access log (SQLite)
+│   └── api/                     ← Starlette REST API, route handlers, request validation, check-in store
 │
 ├── frontend/
 │   ├── index.html               ← Landing page
@@ -116,6 +119,7 @@ personnel-welfare-intelligence/
 │   ├── processed/               ← 7 precomputed JSON dashboard payloads
 │   ├── schema/                  ← JSON table schemas
 │   ├── responses/               ← Self-assessment answers (runtime, not committed)
+│   ├── access_log.sqlite3       ← Record-access log (runtime, not committed)
 │   └── identity_map.sqlite3     ← Identity vault & re-identification audit (not committed)
 │
 ├── docs/                        ← Comprehensive documentation suite
@@ -125,7 +129,7 @@ personnel-welfare-intelligence/
 │   └── data_dictionary.md       ← Complete data dictionary for all CSVs and JSONs
 │
 ├── scripts/                     ← Entry points for data generation, training, and pipeline
-├── tests/                       ← 134 automated unit tests verifying invariants & security
+├── tests/                       ← 211 automated unit tests verifying invariants & security
 ├── CodebaseGuide.md             ← Comprehensive in-depth technical walkthrough
 └── STATUS.md                    ← Transparent accounting of completed vs. deferred scope
 ```
@@ -142,11 +146,15 @@ python -m unittest discover -s tests
 
 Tests verify:
 - Commander payload data-leak proof (`test_rbac_api.py`)
-- Route-level auth and role scope, end to end over HTTP (`test_api_routes.py`)
+- Route-level auth and role scope, end to end over HTTP, including the officer gate on personal routes and what-if input validation (`test_api_routes.py`)
+- Conformal calibration arithmetic, coverage on exchangeable data, and band certainty (`test_conformal.py`)
+- The single escalation rule and its consumers (`test_escalation.py`)
+- Record-access log contents, scoping and retention (`test_access_log.py`)
+- Request-body validation (`test_request_parsing.py`)
 - JWT creation, verification, tampering, and expiration (`test_jwt_auth.py`)
 - Graduated alerting rules and confidence suppression (`test_alert_rules.py`)
 - Recommendation determinism and attribution filters (`test_recommendation_engine.py`)
-- Self-assessment answer validation and per-person scoping (`test_checkin_store.py`)
+- Self-assessment answer validation against the question bank and per-person scoping (`test_checkin_store.py`)
 - Voice pipeline DSP invariance and weight sums (`test_voice_pipeline.py`)
 - Behavioral signal weights and settings contracts (`test_behavioral_engine.py`)
 

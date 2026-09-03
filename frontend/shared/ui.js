@@ -194,6 +194,33 @@ export function sparkline(points, thresholds = {}, width = 520, height = 150) {
 }
 
 /**
+ * Describe a calibrated score range in one short phrase.
+ * @param {Object} risk A case's `risk` block (`interval`, `band_certainty`, `bands_plausible`).
+ * @returns {string} e.g. "calibrated range 57–75 (90%) · borderline: Moderate / High", or "" when uncalibrated.
+ */
+export function intervalText(risk) {
+  if (!risk || !risk.interval) return "";
+  const { low, high, coverage } = risk.interval;
+  const pct = coverage ? ` (${Math.round(coverage * 100)}%)` : "";
+  const bands = (risk.bands_plausible || []).join(" / ");
+  const tail = risk.band_certainty === "borderline" ? ` · borderline: ${bands}` : " · band certain";
+  return `calibrated range ${Number(low).toFixed(0)}–${Number(high).toFixed(0)}${pct}${tail}`;
+}
+
+/**
+ * Build a small badge saying whether a band is certain or borderline.
+ * @param {string} certainty "certain", "borderline", or null.
+ * @returns {HTMLElement|null} The badge, or null when uncalibrated.
+ */
+export function certaintyBadge(certainty) {
+  if (!certainty) return null;
+  return el("span", {
+    class: `badge badge-sm ${certainty === "borderline" ? "moderate" : "neutral"}`,
+    text: certainty,
+  });
+}
+
+/**
  * Format a trend direction with an arrow glyph.
  * @param {string} direction Trend direction.
  * @returns {string} Display text.

@@ -45,9 +45,11 @@ def _case(
 
 
 def _near_miss(unit_id: str = "U016") -> dict:
+    # Shaped like ``NearMiss.to_dict()``: the pipeline writes ``last_detected``.
     return {
         "unit_id": unit_id,
-        "snapshot_date": "2026-09-01",
+        "first_detected": "2026-08-02",
+        "last_detected": "2026-09-01",
         "summary": f"Unit {unit_id} sustained demand/recovery/staffing near-miss",
     }
 
@@ -105,17 +107,50 @@ class TestOfficerAlerts(unittest.TestCase):
         urgent = [a for a in alerts if a.priority == "urgent"]
         self.assertGreater(len(urgent), 0)
 
-    def test_persistent_moderate_generates_officer_alert(self) -> None:
+    def test_persistent_rising_moderate_generates_officer_alert(self) -> None:
         alerts = self._officer_alerts(
             _case(
                 level="Moderate",
                 score=52.0,
+                direction="Rising",
                 persistence=settings.TREND_PERSISTENCE_SNAPSHOTS,
                 confidence="Medium",
             )
         )
         persistent = [a for a in alerts if a.rule_id == "officer_alert_persistent"]
         self.assertGreater(len(persistent), 0)
+        self.assertIn("rising", persistent[0].body)
+
+    def test_persistent_stable_moderate_does_not_alert_an_officer(self) -> None:
+        """The alert rule and the officer queue share one escalation rule.
+
+        A stable Moderate pattern is a unit condition, surfaced to a commander
+        through the aggregates; it is not an individual escalation. If this
+        fired, an officer would be alerted about a case they cannot open.
+        """
+        if not settings.ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING:
+            self.skipTest("rising requirement disabled in settings")
+        alerts = self._officer_alerts(
+            _case(
+                level="Moderate",
+                score=52.0,
+                direction="Stable",
+                persistence=settings.TREND_PERSISTENCE_SNAPSHOTS,
+                confidence="Medium",
+            )
+        )
+        self.assertEqual(alerts, [])
+
+    def test_borderline_high_alert_says_so(self) -> None:
+        case = _case(level="High", score=66.0, confidence="High")
+        case["risk"]["is_borderline"] = True
+        alerts = [a for a in self._officer_alerts(case) if a.rule_id == "officer_alert_high"]
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("provisional", alerts[0].body)
+
+    def test_unknown_confidence_level_suppresses_rather_than_raises(self) -> None:
+        alerts = self._officer_alerts(_case(level="High", confidence="weird"))
+        self.assertEqual(alerts, [])
 
     def test_normal_risk_no_officer_alert(self) -> None:
         alerts = self._officer_alerts(_case(level="Normal", score=28.0))
@@ -138,6 +173,12 @@ class TestCommanderAlerts(unittest.TestCase):
     def test_commander_alert_has_unit_id(self) -> None:
         alerts = evaluate_near_miss_alerts([_near_miss("U016")])
         self.assertEqual(alerts[0].unit_id, "U016")
+
+    def test_commander_alert_carries_the_snapshot_it_refers_to(self) -> None:
+        """Regression: the rule read ``snapshot_date``; the finding writes
+        ``last_detected``, so every commander alert shipped with an empty date."""
+        alerts = evaluate_near_miss_alerts([_near_miss("U016")])
+        self.assertEqual(alerts[0].snapshot_date, "2026-09-01")
 
     def test_commander_alert_dict_has_no_individual_fields(self) -> None:
         from backend.auth.rbac import find_individual_fields

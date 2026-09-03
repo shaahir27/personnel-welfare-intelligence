@@ -21,11 +21,13 @@ import numpy as np
 import pandas as pd
 
 from backend.config import settings
-from backend.models import explainability_shap, model_registry
+from backend.models import conformal, explainability_shap, model_registry
 
 ID_COLUMN = "pseudonym_id"
 SNAPSHOT_COLUMN = "snapshot_date"
 SCORE_COLUMN = settings.MODEL_TARGET_NAME
+INTERVAL_LOW_COLUMN = "risk_interval_low"
+INTERVAL_HIGH_COLUMN = "risk_interval_high"
 
 
 @dataclass
@@ -46,6 +48,25 @@ class Scorer:
     def feature_names(self) -> List[str]:
         """Input order this model expects."""
         return list(self.metadata.feature_names)
+
+    @property
+    def interval_half_width(self) -> float | None:
+        """Calibrated interval half-width, or None for an uncalibrated model.
+
+        Read from the registry metadata written by ``scripts/train_models.py``.
+        A model registered before calibration existed carries no block and
+        scores without intervals; nothing downstream invents one.
+        """
+        block = self.metadata.conformal
+        if not block:
+            return None
+        return float(block["half_width"])
+
+    @property
+    def interval_coverage(self) -> float | None:
+        """Target coverage of the calibrated interval, or None."""
+        block = self.metadata.conformal
+        return float(block["coverage"]) if block else None
 
     def score_frame(self, signals: pd.DataFrame) -> pd.DataFrame:
         """Score every row of a behavioral-signal frame.
@@ -74,7 +95,12 @@ class Scorer:
         predictions = np.asarray(self.estimator.predict(matrix), dtype=np.float64)
 
         out = signals.copy()
-        out[SCORE_COLUMN] = np.clip(predictions, settings.SIGNAL_MIN, settings.SIGNAL_MAX)
+        scores = np.clip(predictions, settings.SIGNAL_MIN, settings.SIGNAL_MAX)
+        out[SCORE_COLUMN] = scores
+        half_width = self.interval_half_width
+        if half_width is not None:
+            out[INTERVAL_LOW_COLUMN] = np.clip(scores - half_width, settings.SIGNAL_MIN, settings.SIGNAL_MAX)
+            out[INTERVAL_HIGH_COLUMN] = np.clip(scores + half_width, settings.SIGNAL_MIN, settings.SIGNAL_MAX)
         return out
 
     def score_row(self, signal_values: Dict[str, float]) -> float:
@@ -94,6 +120,28 @@ class Scorer:
         )
         prediction = float(np.asarray(self.estimator.predict(row[None, :]))[0])
         return float(np.clip(prediction, settings.SIGNAL_MIN, settings.SIGNAL_MAX))
+
+    def score_row_with_interval(self, signal_values: Dict[str, float]) -> Dict[str, float | None]:
+        """Score a single set of signal values and attach its calibrated range.
+
+        Args:
+            signal_values: Mapping of feature name to value.
+
+        Returns:
+            ``{"score", "interval_low", "interval_high", "coverage"}``. The
+            interval fields are None when the model carries no calibration.
+        """
+        score = self.score_row(signal_values)
+        half_width = self.interval_half_width
+        if half_width is None:
+            return {"score": score, "interval_low": None, "interval_high": None, "coverage": None}
+        low, high = conformal.interval(score, half_width)
+        return {
+            "score": score,
+            "interval_low": low,
+            "interval_high": high,
+            "coverage": self.interval_coverage,
+        }
 
     def explain_row(self, signal_values: Dict[str, float]) -> explainability_shap.Explanation:
         """Explain one prediction as a contribution per signal.

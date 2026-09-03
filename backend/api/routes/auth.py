@@ -18,13 +18,13 @@ call something calls it.
 
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, List
+from typing import List
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from backend.api import request_parsing
 from backend.auth import credentials, jwt_handler, rbac
 from backend.config import settings
 
@@ -54,20 +54,17 @@ async def login(request: Request) -> JSONResponse:
         believing they are scoped to something they are not.
     """
     try:
-        body: Dict[str, Any] = await request.json()
-    except (ValueError, json.JSONDecodeError):
-        return JSONResponse({"detail": "request body must be JSON"}, status_code=400)
-
-    username = str(body.get("username", "")).strip()
-    password = str(body.get("password", ""))
-    if not username or not password:
-        return JSONResponse(
-            {"detail": "username and password are required"}, status_code=400
-        )
+        body = await request_parsing.read_json_object(request)
+        username = request_parsing.parse_non_empty_string(body, "username")
+        password = body.get("password")
+        if not isinstance(password, str) or not password:
+            raise request_parsing.InvalidRequest("username and password are required")
+    except request_parsing.InvalidRequest as exc:
+        return request_parsing.bad_request(exc)
 
     account = credentials.authenticate(username, password)
 
-    requested_subject = str(body.get("subject", "") or "").strip()
+    requested_subject = request_parsing.optional_string(body, "subject")
     if requested_subject and not account.may_choose_subject:
         raise rbac.AuthorisationError(
             f"account '{account.username}' has a fixed subject and may not request one"

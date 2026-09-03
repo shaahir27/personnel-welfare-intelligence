@@ -38,6 +38,11 @@ class ProcessedStore:
         units: Unit aggregates, already small-cell suppressed upstream.
         near_misses: Confirmed unit-level near-miss findings.
         explanations: Precomputed SHAP explanations, keyed by pseudonym.
+        alerts: The alert batch, grouped by recipient and by pseudonym.
+        units_by_id: Unit aggregates keyed by unit id.
+        near_miss_by_unit: Near-miss findings keyed by unit id.
+        cache: Per-store memo for derived views that are pure functions of
+            the loaded data (the officer queue). Cleared by reloading.
     """
 
     meta: Dict[str, Any] = field(default_factory=dict)
@@ -48,11 +53,21 @@ class ProcessedStore:
     near_misses: List[Dict[str, Any]] = field(default_factory=list)
     explanations: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     alerts: Dict[str, Any] = field(default_factory=dict)
+    units_by_id: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    near_miss_by_unit: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    cache: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Index the lists so per-request lookups are O(1)."""
+        if not self.units_by_id:
+            self.units_by_id = {str(u.get("unit_id")): u for u in self.units}
+        if not self.near_miss_by_unit:
+            self.near_miss_by_unit = {str(n.get("unit_id")): n for n in self.near_misses}
 
     @property
     def near_miss_units(self) -> set[str]:
         """Unit ids currently in a near-miss condition."""
-        return {str(n["unit_id"]) for n in self.near_misses}
+        return set(self.near_miss_by_unit)
 
     def unit(self, unit_id: str) -> Dict[str, Any] | None:
         """Return one unit's aggregate.
@@ -63,10 +78,11 @@ class ProcessedStore:
         Returns:
             The unit entry, or None if unknown.
         """
-        for entry in self.units:
-            if str(entry.get("unit_id")) == unit_id:
-                return entry
-        return None
+        return self.units_by_id.get(str(unit_id))
+
+    def near_miss(self, unit_id: str) -> Dict[str, Any] | None:
+        """Return the live near-miss finding for a unit, if any."""
+        return self.near_miss_by_unit.get(str(unit_id))
 
 
 def load_store(processed_dir: Path | None = None) -> ProcessedStore:

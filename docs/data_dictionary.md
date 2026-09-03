@@ -110,8 +110,16 @@ Sourcing convention (matches `settings.py`):
 | `snapshot_date` | date string | No | |
 | `risk.score` | float | No | 0–100 model output |
 | `risk.level` | string | No | `Normal`, `Moderate`, `High` |
-| `risk.band_min` | float | No | Lower bound of this band |
-| `risk.band_max` | float | No | Upper bound (100 for High) |
+| `risk.description` | string | No | Non-judgemental wording for the level |
+| `risk.distance_to_next_band` | float | Yes | Points to the next band up; null at High |
+| `risk.distance_to_band_below` | float | Yes | Points above the cutoff that admitted this band; null at Normal |
+| `risk.is_officer_visible` | bool | No | Whether the *level alone* escalates; the full rule is `is_officer_visible` at case level |
+| `risk.interval` | object | Yes | `{low, high, coverage}` — split-conformal calibrated range; null for an uncalibrated model |
+| `risk.bands_plausible` | list | No | Every band the range touches, lowest first |
+| `risk.band_certainty` | string | Yes | `certain` or `borderline`; null when uncalibrated |
+| `risk.is_borderline` | bool | No | True when the range crosses a band cutoff |
+| `risk.borderline_note` | string | Yes | Wording shown when borderline |
+| `is_officer_visible` | bool | No | The escalation decision for this case (`post_model_analytics/escalation.py`) |
 | `trend.direction` | string | Yes | `Rising`, `Stable`, `Improving`, `Insufficient data` |
 | `trend.slope_per_30d` | float | Yes | Score-points change per 30 days |
 | `trend.persistence_snapshots` | int | Yes | Consecutive snapshots at current level or above |

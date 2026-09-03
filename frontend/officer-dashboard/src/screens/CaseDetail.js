@@ -4,15 +4,16 @@
  * any unit near-miss, with the handling constraint stated on the screen.
  */
 import { api } from "../../../shared/api.js";
-import { badge, el, factorBar, meter, sparkline, trendText } from "../../../shared/ui.js";
+import { badge, certaintyBadge, el, factorBar, intervalText, meter, sparkline, trendText } from "../../../shared/ui.js";
 
 /**
  * Render the case detail screen.
  * @param {string} caseId Pseudonym of the case.
  * @param {Function} go Navigation callback.
+ * @param {Object} [meta] API metadata; band thresholds are read from it rather than hard-coded.
  * @returns {Promise<HTMLElement>} The screen node.
  */
-export async function renderCaseDetail(caseId, go) {
+export async function renderCaseDetail(caseId, go, meta) {
   if (!caseId) {
     return el("div", { class: "empty", text: "Select a case from the welfare queue." });
   }
@@ -29,7 +30,10 @@ export async function renderCaseDetail(caseId, go) {
         el("span", { class: "score-value", text: String(data.risk.score) }),
         el("span", { class: "score-max", text: "/ 100" }),
         badge(data.risk.level),
+        certaintyBadge(data.risk.band_certainty),
       ]),
+      data.risk.interval ? el("div", { class: "small muted", style: "margin-top:6px", text: intervalText(data.risk) }) : null,
+      data.risk.is_borderline ? el("div", { class: "note caution", text: data.risk.borderline_note }) : null,
       data.trend ? el("div", { class: "small muted", style: "margin-top:8px", text:
         `${trendText(data.trend.direction)} · ${data.trend.slope_per_30_days} pts / 30 days · ` +
         `elevated ${data.trend.persistence_snapshots} snapshot(s)` }) : null,
@@ -44,7 +48,7 @@ export async function renderCaseDetail(caseId, go) {
 
   root.appendChild(el("div", { class: "card" }, [
     el("h2", { text: "Trajectory" }),
-    sparkline(data.history, { risk_moderate_min: 40, risk_high_min: 65 }),
+    sparkline(data.history, data.thresholds || (meta && meta.thresholds) || {}),
   ]));
 
   const factorCard = el("div", { class: "card" }, [el("h2", { text: "Contributing factors (exact Shapley)" })]);
@@ -110,6 +114,10 @@ export async function renderCaseDetail(caseId, go) {
     el("h2", { text: "Data confidence" }),
     el("div", { class: "small", text: `${data.confidence.level} (${(data.confidence.score * 100).toFixed(0)}% completeness)` }),
     el("div", { class: "note caution", text: data.confidence.disclaimer }),
+    data.risk.interval ? el("div", { class: "small muted", style: "margin-top:8px", text:
+      "The calibrated range above is the separate, statistical statement: a split-conformal " +
+      "interval whose coverage is guaranteed on data the model never saw. Completeness says how " +
+      "much data the score rests on; the range says how far the model is typically wrong." }) : null,
   ]));
 
   if (data.unit_near_miss) {
@@ -119,6 +127,7 @@ export async function renderCaseDetail(caseId, go) {
     ]));
   }
 
+  if (data.access_note) root.appendChild(el("div", { class: "small muted", style: "margin:8px 0", text: data.access_note }));
   root.appendChild(el("button", { class: "ghost", text: "Open in what-if simulator", onclick: () => go("whatif", caseId) }));
   return root;
 }

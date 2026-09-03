@@ -42,6 +42,13 @@ export async function renderWhatIfSimulator(caseId, meta) {
       el("span", { class: "score-max", text: `was ${result.current_score}` }),
       el("span", { class: "small", text: `${result.change > 0 ? "+" : ""}${result.change} points` }),
     ]));
+    if (result.projected_interval) {
+      const p = result.projected_interval;
+      const c = result.current_interval;
+      output.appendChild(el("div", { class: "small muted", text:
+        `calibrated range ${p.low}–${p.high} (was ${c.low}–${c.high}). The range moves with the ` +
+        `score; it does not narrow, because the model's typical error does not depend on the scenario.` }));
+    }
     output.appendChild(el("div", { class: "small muted", text: result.disclaimer }));
   }
 

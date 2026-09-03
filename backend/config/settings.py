@@ -53,6 +53,13 @@ IDENTITY_MAP_DB_PATH: Final[Path] = DATA_DIR / "identity_map.sqlite3"
 RESPONSES_DATA_DIR: Final[Path] = DATA_DIR / "responses"
 CHECKIN_RESPONSES_PATH: Final[Path] = RESPONSES_DATA_DIR / "check_in_responses.jsonl"
 
+# Record-access log. Who (by role) looked at which pseudonym's record, when,
+# and whether the request was granted. Separate from the identity vault --
+# the log must never be the one place where a name and a welfare record sit
+# together -- and separate from data/processed/, which the pipeline rewrites.
+# Covered by the *.sqlite3 rule in .gitignore.
+ACCESS_LOG_DB_PATH: Final[Path] = DATA_DIR / "access_log.sqlite3"
+
 # ---------------------------------------------------------------------------
 # Reference date for the synthetic corpus
 # ---------------------------------------------------------------------------
@@ -455,6 +462,25 @@ TREND_SLOPE_STABLE_BAND: Final[float] = 3.0
 TREND_PERSISTENCE_SNAPSHOTS: Final[int] = 3
 
 # ---------------------------------------------------------------------------
+# Officer escalation rule (backend/post_model_analytics/escalation.py)
+# ---------------------------------------------------------------------------
+# A case is visible to a welfare officer when it is currently High, or when it
+# has been Moderate-or-above for TREND_PERSISTENCE_SNAPSHOTS consecutive
+# snapshots AND -- when the flag below is True -- its trend is Rising.
+#
+# ASSUMPTION, with the measurement that motivated it: on the committed corpus
+# the rule without the Rising requirement made 619 of 800 people officer-
+# visible (156 High + 463 persistent Moderate, of whom 441 were Stable), which
+# is not a prioritisation. With it, 159 are (the count moves a little with each
+# retrain and is written to meta.json as officer_visible_count). A stable Moderate pattern
+# is a unit condition, and the unit aggregates and near-miss detector exist to
+# show it to a commander as a condition rather than as a list of names; a
+# rising one is an individual trajectory, which is what early intervention is
+# for. Everyone who drops out of the queue is still scored, still sees their
+# own result, and still receives their own notification.
+ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING: Final[bool] = True
+
+# ---------------------------------------------------------------------------
 # Confidence engine (backend/post_model_analytics/confidence_engine.py)
 # ---------------------------------------------------------------------------
 # IMPORTANT: this produces a data-completeness heuristic, NOT a calibrated
@@ -589,6 +615,27 @@ TREE_BASED_MODEL_NAMES: Final[Tuple[str, ...]] = (
 MODEL_SELECTION_NON_TREE_R2_MARGIN: Final[float] = 0.02
 
 # ---------------------------------------------------------------------------
+# Calibrated risk intervals (backend/models/conformal.py)
+# ---------------------------------------------------------------------------
+# Split conformal prediction: the deployed model is calibrated on a slice of
+# training people it never saw, and every score is carried with an interval
+# [score - q, score + q] whose coverage is guaranteed in finite samples with
+# no assumption about the model or the error distribution. SOURCE for the
+# method: Vovk, Gammerman & Shafer (2005); Lei et al., JASA (2018);
+# Angelopoulos & Bates (2021).
+#
+# ASSUMPTION: 90% is the conventional default coverage in the conformal
+# literature and is the one used here. Higher coverage widens every interval;
+# at 95% on this corpus almost every Moderate case would straddle a cutoff and
+# the borderline flag would stop discriminating.
+CONFORMAL_COVERAGE: Final[float] = 0.90
+# Share of TRAINING people carved off as the calibration set. ASSUMPTION: a
+# fifth leaves the deployed model 512 of 640 training people and gives the
+# calibration quantile 128 people (768 rows) to rest on.
+CONFORMAL_CALIBRATION_RATIO: Final[float] = 0.20
+CONFORMAL_METHOD: Final[str] = "split-conformal-absolute-residual"
+
+# ---------------------------------------------------------------------------
 # Explainability (backend/models/explainability_shap.py)
 # ---------------------------------------------------------------------------
 # Background sample size used as the reference distribution for Shapley
@@ -645,6 +692,10 @@ RETENTION_RAW_AUDIO_DAYS: Final[int] = 0        # deleted immediately after use
 RETENTION_ACOUSTIC_FEATURES_DAYS: Final[int] = 180
 RETENTION_RISK_SCORES_DAYS: Final[int] = 730
 RETENTION_HR_FEATURES_DAYS: Final[int] = 730
+# The record-access log is personal data too: it says whose record was looked
+# at. ASSUMPTION: kept for one year, long enough for an oversight review of the
+# preceding reporting cycle, and purged by the pipeline after that.
+RETENTION_ACCESS_LOG_DAYS: Final[int] = 365
 
 # ---------------------------------------------------------------------------
 # API

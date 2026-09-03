@@ -180,7 +180,7 @@ These four commands, run in order, get the system fully operational.
    - Linear Regression, Ridge, Lasso, Random Forest, Gradient Boosting, Hist Gradient Boosting, SVR, MLP
 5. Evaluates each on MAE, RMSE, R², band accuracy, High recall
 6. Applies the **selection rule**: prefer tree-based (exact SHAP) unless non-tree beats it by >0.02 R²
-7. Refits the winner on ALL data
+7. Fits the deployed model on a fit slice of the training people, calibrates its conformal interval on the rest, and verifies coverage on the test people
 8. Saves the model to `backend/models/model_registry/v<timestamp>/`
    - `model.joblib` — the fitted estimator
    - `metadata.json` — feature order, metrics, selection reason, library versions
@@ -1470,7 +1470,7 @@ Stage 6: welfare recommendations & graduated alert batch
         └─ attached directly into case payload in cases.json
   └─ alert_rules.generate_alert_batch(latest_cases, near_misses)
      └─ generates personal notifications (for all Moderate/High personnel)
-     └─ generates officer alerts (for High, persistent Moderate, rising High; suppressed if Low confidence)
+     └─ generates officer alerts (for High, persistent-and-rising Moderate via escalation.is_officer_visible, rising High; suppressed if Low confidence)
      └─ generates commander alerts (for unit-level near-miss findings; zero individual identifiers)
   → alerts payload with by_recipient and by_pseudonym
 
@@ -1523,7 +1523,7 @@ Browser (officer-dashboard) with Authorization: Bearer <token> (role: welfare_of
   → officer.queue(request)
   → rbac.require_role(principal, "welfare_officer")
   → build_queue(store)
-     └─ filters: is_officer_visible(case) → High OR is_persistent Moderate
+     └─ filters: escalation.is_officer_visible(case) → High OR (persistent Moderate AND Rising)
      └─ sorts by priority_score (risk + trend bonus - confidence penalty)
      └─ returns trimmed list (pseudonym, score, level, trend, confidence, attribution)
   → JSONResponse (no raw voice, no unredacted personnel fields — just queue fields)
@@ -1574,7 +1574,7 @@ The privacy design has multiple independent layers:
 | Voice pipeline boundary | Only one 0-100 number crosses the module boundary | Officer screen can't show raw acoustic measurements |
 | Voluntary voice | `voice_signal_present=0` is treated identically to missing — never as "no stress" | Declining voice doesn't penalise you |
 | No audio retention | Raw audio deleted immediately after feature extraction | No audio store to compromise |
-| Officer visibility gate | Only High cases (or persistent Moderate) are in the queue | Most people are never escalated |
+| Officer visibility gate | Only High cases (or persistent, rising Moderate) are in the queue — one rule in `escalation.py` | Most people are never escalated |
 | Individual-level content | Persons see MORE about themselves than officers do | System is transparent to the people it monitors |
 
 ---
@@ -1657,7 +1657,7 @@ voice_stress_signal.py
 | Own privacy centre & audit | ✅ | ❌ | ❌ |
 | Personal notifications (`/notifications`) | ✅ | ❌ | ❌ |
 | Other people's individual data | ❌ | ❌ (only escalated cases) | ❌ |
-| Officer queue (High + persistent Moderate) | ❌ | ✅ | ❌ |
+| Officer queue (High + persistent rising Moderate) | ❌ | ✅ | ❌ |
 | Full case detail & recommendations | ❌ | ✅ | ❌ |
 | What-if simulation | ❌ | ✅ | ❌ |
 | Unit aggregates | ❌ | ❌ | ✅ |

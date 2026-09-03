@@ -42,7 +42,7 @@ separately from the analytics data.
 | Role | What they see |
 |---|---|
 | **Personnel** (individual) | Their own risk score, trend, contributing factors, history, notifications. More than any other role — a system that tells the organisation more about you than it tells you cannot be trusted. |
-| **Welfare Officer** | Pseudonymised case queue (High + persistent Moderate only). Full case detail including SHAP explanation. No name, no service number. |
+| **Welfare Officer** | Pseudonymised case queue (High, or persistent Moderate that is rising — one rule, in `backend/post_model_analytics/escalation.py`). Full case detail including SHAP explanation. No name, no service number. Every open of a case is written to the record-access log. |
 | **Commander** | Unit aggregates only. No individual scores, no contributing factors, no pseudonym IDs. Enforced server-side by `rbac.assert_commander_safe()`. Units below 10 personnel are suppressed entirely (small-cell suppression). |
 
 ---
@@ -132,3 +132,23 @@ Audio recording → acoustic feature extraction → delete audio → baseline co
                                                                → voice_stress_signal (0-100)
                                                                → score model (one of 10 inputs)
 ```
+
+---
+
+## Record-access log
+
+Every time a welfare officer opens an individual's record — case detail, the
+what-if simulator, or the personal summary, history or notification feeds — the
+server writes one row to `data/access_log.sqlite3`
+(`backend/db/access_log.py`): timestamp, the officer's role and service
+subject, the action, the pseudonym concerned, and whether the request was
+granted or refused. Refusals are recorded as well as grants.
+
+- The log carries the **pseudonym, never a name**, so it cannot become the one
+  table where identity and welfare data sit together.
+- It records the **fact** of access, never the payload.
+- The individual sees it in the Privacy Centre as **counts and dates by role**,
+  not the officer's identity: the purpose is that a person can see that their
+  record was opened and when. The raw rows are for oversight.
+- Retention: `settings.RETENTION_ACCESS_LOG_DAYS` (365, an assumption); the
+  pipeline purges older rows on every run.

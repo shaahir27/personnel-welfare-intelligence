@@ -10,22 +10,45 @@ import { api } from "../../../shared/api.js";
 import { el } from "../../../shared/ui.js";
 
 /**
- * Render one question row.
+ * Render one question row, registering its input so the answer can be read back.
  * @param {Object} q Question record.
+ * @param {Array} inputs Collector the row appends its {question_id, read} entry to.
  * @returns {HTMLElement} The row.
  */
-function questionRow(q) {
+function questionRow(q, inputs) {
   const body = [el("div", { text: q.text })];
+  let field;
   if (q.free_text) {
-    body.push(el("textarea", { placeholder: "Optional — only you see this." }));
+    field = el("textarea", { placeholder: "Optional — only you see this." });
+    body.push(field);
+    inputs.push({ question_id: q.id, read: () => ({ text: field.value }) });
   } else {
-    body.push(el("input", { type: "range", min: "0", max: "4", value: "2" }));
+    field = el("input", { type: "range", min: "0", max: "4", value: "2" });
+    body.push(field);
     body.push(el("div", { class: "small muted", text: "0 = not at all · 4 = a great deal" }));
+    inputs.push({ question_id: q.id, read: () => ({ value: Number(field.value) }) });
   }
   if (q.tailored_to) {
     body.push(el("div", { class: "small muted", text: `Shown because of: ${q.tailored_to.replace(/_/g, " ")}` }));
   }
   return el("div", { class: "card" }, body);
+}
+
+/**
+ * Collect the answered questions into the submission payload.
+ *
+ * A free-text box left empty is not an answer and is not sent. The sliders are
+ * sent as they stand, including at their default of 2 — a person who read a
+ * question and left the slider alone has still told the system something, and
+ * dropping it would silently discard it.
+ *
+ * @param {Array} inputs Registered question inputs.
+ * @returns {Array} Answers to submit.
+ */
+function collectAnswers(inputs) {
+  return inputs
+    .map((entry) => ({ question_id: entry.question_id, ...entry.read() }))
+    .filter((answer) => answer.value !== undefined || (answer.text || "").trim());
 }
 
 /**
@@ -57,12 +80,37 @@ export async function renderVoiceCheckIn(pseudonymId) {
 
   root.appendChild(el("h2", { class: "page-title", style: "font-size:17px;margin-top:26px", text: "A few questions" }));
   root.appendChild(el("div", { class: "small muted", style: "margin-bottom:12px", text: data.tailoring_method }));
-  data.general.forEach((q) => root.appendChild(questionRow(q)));
-  data.tailored.forEach((q) => root.appendChild(questionRow(q)));
 
-  root.appendChild(el("button", { class: "primary", text: "Save my answers" }));
+  const inputs = [];
+  data.general.forEach((q) => root.appendChild(questionRow(q, inputs)));
+  data.tailored.forEach((q) => root.appendChild(questionRow(q, inputs)));
+
+  const status = el("div", { class: "small muted", style: "margin-top:10px" });
+  const save = el("button", { class: "primary", text: "Save my answers" });
+  save.addEventListener("click", async () => {
+    const answers = collectAnswers(inputs);
+    if (!answers.length) {
+      status.textContent = "Nothing to save yet — answer at least one question.";
+      return;
+    }
+    save.disabled = true;
+    status.textContent = "Saving…";
+    try {
+      const result = await api.personal.submitCheckIn(pseudonymId, answers);
+      status.textContent =
+        `Saved. This is check-in ${result.submission_count} on your record.`;
+    } catch (error) {
+      status.textContent = `Not saved: ${error.message}`;
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  root.appendChild(save);
+  root.appendChild(status);
   root.appendChild(el("div", { class: "note", text:
     "Answers are stored against your own record. They are not shown to your commander, " +
-    "and a welfare officer sees them only if you ask for support." }));
+    "a welfare officer sees them only if you ask for support, and they do not affect " +
+    "your indicator score — the eight indicators come from HR records alone." }));
   return root;
 }

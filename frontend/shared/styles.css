@@ -230,6 +230,37 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; }
   padding: 14px 16px;
   background: transparent;
 }
+
+/* Recommended interventions and alerts. Rendered as plain stacked blocks, not
+ * as anything resembling a task list with checkboxes: these are options put in
+ * front of a deciding officer, and a control that looks like it wants ticking
+ * invites the officer to work through it rather than to choose. */
+.rec {
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px 14px;
+  margin: 14px 0;
+}
+.rec:first-of-type { margin-top: 8px; }
+.rec-head {
+  display: flex; align-items: baseline; gap: 10px;
+  justify-content: space-between; margin-bottom: 4px;
+}
+.rec-owner {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-faint); white-space: nowrap;
+}
+
+/* A personal notification. Same muted treatment as everything else the person
+ * sees about themselves — see the no-alarm-colours note at the top of this
+ * file. */
+.notice {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+.notice-title { display: block; margin-bottom: 3px; }
 .optional-tag {
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
   color: var(--accent); border: 1px solid var(--accent-dim);

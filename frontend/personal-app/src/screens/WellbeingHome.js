@@ -12,7 +12,10 @@ import { badge, el, factorBar, meter, trendText } from "../../../shared/ui.js";
  * @returns {Promise<HTMLElement>} The screen node.
  */
 export async function renderWellbeingHome(pseudonymId, meta) {
-  const data = await api.personal.summary(pseudonymId);
+  const [data, notifications] = await Promise.all([
+    api.personal.summary(pseudonymId),
+    api.personal.notifications(pseudonymId),
+  ]);
   const root = el("div");
 
   root.appendChild(el("h1", { class: "page-title", text: "My wellbeing" }));
@@ -31,6 +34,20 @@ export async function renderWellbeingHome(pseudonymId, meta) {
     el("p", { class: "small", style: "margin-top:10px", text: data.risk.description }),
   ]);
   root.appendChild(scoreCard);
+
+  if (notifications && notifications.count) {
+    const noticeCard = el("div", { class: "card" }, [
+      el("h2", { text: "Notifications" }),
+    ]);
+    notifications.notifications.forEach((n) => {
+      noticeCard.appendChild(el("div", { class: "notice" }, [
+        el("strong", { class: "notice-title", text: n.title }),
+        el("div", { class: "small", text: n.body }),
+      ]));
+    });
+    noticeCard.appendChild(el("div", { class: "note", text: notifications.note }));
+    root.appendChild(noticeCard);
+  }
 
   const factors = data.contributing_factors;
   const factorCard = el("div", { class: "card" }, [ el("h2", { text: "What is contributing" }) ]);

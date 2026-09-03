@@ -173,13 +173,23 @@ def recommend_from_case(case: Dict) -> List[Recommendation]:
     )
 
     # Extract signal names from contributing factors (SHAP top factors).
-    # These are stored as a list of dicts with a "signal" key, or as a list
-    # of signal name strings — handle both to be robust to schema variations.
+    # These are stored as a list of dicts produced by
+    # ``explainability_shap.ContributingFactor.to_dict()``, whose key is
+    # ``signal_name``. The older ``signal`` / ``name`` spellings are still
+    # accepted so a hand-built case dict keeps working.
     factors = case.get("contributing_factors") or []
     if factors and isinstance(factors[0], dict):
-        top_signals = [f.get("signal", f.get("name", "")) for f in factors]
+        top_signals = [
+            f.get("signal_name") or f.get("signal") or f.get("name") or ""
+            for f in factors
+        ]
     else:
         top_signals = list(factors)
+    # Drop anything that did not resolve to a name. Without this an explained
+    # case yields a list of empty strings, which is truthy, so the fallback
+    # below never runs and the case silently gets no recommendations at all --
+    # and the explained cases are precisely the highest-scoring ones.
+    top_signals = [name for name in top_signals if name]
 
     # Fallback: if SHAP explanations weren't precomputed for this case, use
     # all signal names with a non-zero value as a coarse proxy.

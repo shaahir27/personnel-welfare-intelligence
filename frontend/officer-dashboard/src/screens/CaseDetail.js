@@ -56,6 +56,47 @@ export async function renderCaseDetail(caseId, go) {
   }
   root.appendChild(factorCard);
 
+  const recCard = el("div", { class: "card" }, [
+    el("h2", { text: "Recommended interventions" }),
+  ]);
+  if (data.recommendations && data.recommendations.length) {
+    data.recommendations.forEach((r) => {
+      recCard.appendChild(el("div", { class: "rec" }, [
+        el("div", { class: "rec-head" }, [
+          el("strong", { text: r.title }),
+          el("span", { class: "rec-owner", text: r.action_owner.replace(/_/g, " ") }),
+        ]),
+        el("p", { class: "small", text: r.description }),
+        r.low_confidence
+          ? el("div", { class: "small muted", text:
+              "This case rests on thin data. The action still stands; the picture behind it is less complete." })
+          : null,
+      ]));
+    });
+    recCard.appendChild(el("div", { class: "note", text: data.recommendation_note }));
+  } else {
+    recCard.appendChild(el("div", { class: "small muted", text:
+      "No pre-approved intervention matched this case's risk level, contributing signals and attribution." }));
+  }
+  root.appendChild(recCard);
+
+  if (data.alerts && data.alerts.length) {
+    const alertCard = el("div", { class: "card" }, [el("h2", { text: "Alerts raised" })]);
+    data.alerts.forEach((a) => {
+      alertCard.appendChild(el("div", { class: "rec" }, [
+        el("div", { class: "rec-head" }, [
+          el("strong", { text: a.title }),
+          el("span", { class: "rec-owner", text: a.priority }),
+        ]),
+        el("p", { class: "small", text: a.body }),
+      ]));
+    });
+    alertCard.appendChild(el("div", { class: "note", text:
+      "The individual is not told that an officer was notified. That is deliberate: " +
+      "a person who knows an alert fired has a reason to manage their indicators." }));
+    root.appendChild(alertCard);
+  }
+
   const labels = data.signal_labels || {};
   const indicators = el("div", { class: "card" }, [el("h2", { text: "All indicators" })]);
   Object.entries(data.signals).forEach(([name, value]) => {

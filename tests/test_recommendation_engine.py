@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.recommendation_engine.action_mapper import recommend, recommend_from_case, Recommendation
+from backend.models.explainability_shap import ContributingFactor
 from backend.config import settings
 
 
@@ -195,6 +196,53 @@ class TestRecommendFromCase(unittest.TestCase):
         }
         recs = recommend_from_case(case)
         self.assertIsInstance(recs, list)
+
+    def test_reads_the_key_the_explainer_actually_writes(self) -> None:
+        """Regression: factors from the SHAP explainer use ``signal_name``.
+
+        The wrapper previously read ``signal`` / ``name``, which no explanation
+        ever contains. Every factor name came back as an empty string, the
+        empty-string list is truthy so the signals fallback never ran, and the
+        case got no recommendations -- silently, and only for the explained
+        cases, which are the highest-scoring ones in the queue.
+
+        The factor dict here is built by ``ContributingFactor.to_dict()``
+        rather than typed out, so this test tracks that schema instead of a
+        copy of it.
+        """
+        factor = ContributingFactor(
+            signal_name="workload_deviation_signal",
+            label=settings.signal_label("workload_deviation_signal"),
+            contribution=8.4,
+            signal_value=71.0,
+        ).to_dict()
+
+        case = {
+            "risk": {"level": "High", "score": 78.0},
+            "attribution": {"classification": "Individual"},
+            "confidence": {"level": "High"},
+            "contributing_factors": [factor],
+            # Deliberately empty: if the fallback fires, this test passes for
+            # the wrong reason and stops guarding anything.
+            "signals": {},
+        }
+        recs = recommend_from_case(case)
+        self.assertGreater(
+            len(recs), 0, "explained high-risk case produced no recommendations"
+        )
+
+    def test_unresolvable_factor_names_fall_back_rather_than_yielding_nothing(
+        self,
+    ) -> None:
+        """A factor list with no usable names must not defeat the fallback."""
+        case = {
+            "risk": {"level": "High", "score": 78.0},
+            "attribution": {"classification": "Individual"},
+            "confidence": {"level": "High"},
+            "contributing_factors": [{"unexpected_key": "workload_deviation_signal"}],
+            "signals": {"workload_deviation_signal": 80.0},
+        }
+        self.assertGreater(len(recommend_from_case(case)), 0)
 
 
 if __name__ == "__main__":

@@ -30,8 +30,10 @@ Shapley computation, not a proxy or a feature-importance stand-in: for a tree
 model, ``shap.TreeExplainer(..., feature_perturbation="interventional")`` with
 the same background sample computes the same values, faster.
 
-The performance difference is why the pipeline precomputes explanations only
-for cases an officer will actually open, and computes the rest on demand.
+The performance difference is why explanations are precomputed by the batch
+pipeline for every person at the latest snapshot rather than computed inside a
+request. There is no on-demand path in the API: an explanation either exists in
+``data/processed/explanations.json`` or the response says so plainly.
 """
 
 from __future__ import annotations

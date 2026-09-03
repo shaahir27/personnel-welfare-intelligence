@@ -5,4 +5,13 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Databases. The pseudonym vault holds the mapping from pseudonym back to
+# personnel_id *and* the HMAC salt that produced it, so committing it would
+# undo the pseudonymisation for anyone who cloned the repo. Regenerate it with
+# scripts/generate_synthetic_data.py.
 *.sqlite3
+
+# Self-assessment answers written by the running API. Runtime state, and
+# somebody's own words — not build output, and not ours to publish.
+data/responses/

@@ -14,10 +14,13 @@ Everything is written to ``data/processed/``. The API reads those files; it does
 not retrain, rescore or recompute anything at request time, so a request cannot
 be slow because a model was cold.
 
-Explanations are precomputed only for the cases an officer can actually open
-(the highest-scoring cases at the latest snapshot). Exact Shapley enumeration
-takes about 0.2 s per case, which is instant on demand and would be twenty
-minutes for all 4,800 rows.
+Explanations are precomputed for every person at the latest snapshot. Exact
+Shapley enumeration takes about 0.2 s per case, so that is a couple of minutes
+of batch time and means no user -- officer or individual -- ever opens a record
+whose factor breakdown is missing. Earlier snapshots are not explained: the
+history views show the score trajectory, not a breakdown per point, and
+explaining all 4,800 rows would take about twenty minutes for output nothing
+reads.
 """
 
 from __future__ import annotations
@@ -45,9 +48,19 @@ from backend.post_model_analytics import (  # noqa: E402
 )
 from backend.recommendation_engine import action_mapper  # noqa: E402
 
-# How many cases get a precomputed explanation. ASSUMPTION: an officer works a
-# prioritised queue from the top; anything deeper is explained on demand.
-EXPLAIN_TOP_N = 150
+# How many cases get a precomputed explanation, or None for every case at the
+# latest snapshot.
+#
+# This was 150 on the assumption that an officer works a prioritised queue from
+# the top and anything deeper would be explained on demand. Neither half held:
+# 624 of 800 cases are officer-visible, and no on-demand path was ever built --
+# the API returns null for an unexplained case. So the top-150 cap meant three
+# quarters of the queue, and every individual outside the top 150 looking at
+# their own record, saw no factor breakdown at all. Explainability is a stated
+# PS requirement, so it is precomputed for everyone. At roughly 0.2 s per case
+# this adds a little over two minutes to a batch run that is not on any user's
+# critical path.
+EXPLAIN_TOP_N: int | None = None
 
 
 def _write(path: Path, payload: object) -> Path:
@@ -105,9 +118,10 @@ def main() -> int:
     latest = scored[scored["snapshot_date"] == latest_date].copy()
     latest = latest.sort_values(settings.MODEL_TARGET_NAME, ascending=False)
 
-    print(f"4/6  Explaining the top {EXPLAIN_TOP_N} cases ...")
+    to_explain = latest if EXPLAIN_TOP_N is None else latest.head(EXPLAIN_TOP_N)
+    print(f"4/6  Explaining {len(to_explain)} cases ...")
     explanations: Dict[str, object] = {}
-    for _, row in latest.head(EXPLAIN_TOP_N).iterrows():
+    for _, row in to_explain.iterrows():
         values = {name: float(row[name]) for name in scorer.feature_names}
         explanations[str(row["pseudonym_id"])] = scorer.explain_row(values).to_dict()
 

@@ -44,6 +44,15 @@ DB_PATH: Final[Path] = DATA_DIR / "pwiews.sqlite3"
 # See backend/preprocessing/pseudonymize.py and docs/privacy_policy.md.
 IDENTITY_MAP_DB_PATH: Final[Path] = DATA_DIR / "identity_map.sqlite3"
 
+# Self-assessment answers are written here by the API at request time. They are
+# runtime state rather than pipeline output, so they deliberately do not live in
+# data/processed/ -- that directory is rewritten wholesale on every pipeline run
+# and would take people's answers with it. Nothing in the scoring path reads
+# this file: answers are held for the person and, if they ask for support, for
+# the welfare officer they ask. They are not a model input.
+RESPONSES_DATA_DIR: Final[Path] = DATA_DIR / "responses"
+CHECKIN_RESPONSES_PATH: Final[Path] = RESPONSES_DATA_DIR / "check_in_responses.jsonl"
+
 # ---------------------------------------------------------------------------
 # Reference date for the synthetic corpus
 # ---------------------------------------------------------------------------

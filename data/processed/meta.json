@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-01T23:42:45.382301+00:00",
+  "generated_at": "2026-09-03T02:04:16.842214+00:00",
   "reference_date": "2026-09-01",
   "latest_snapshot": "2026-09-01",
   "population": 800,
@@ -55,5 +55,5 @@
     "voice_stress_signal": "Voluntary voice check-in differs from personal baseline",
     "voice_signal_present": "Voice check-in data availability"
   },
-  "explained_case_count": 150
+  "explained_case_count": 800
 }

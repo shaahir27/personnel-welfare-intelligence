@@ -1,6 +1,6 @@
 """The Predictive Behavioral Analytics Engine: features -> behavioral signals.
 
-One job: combine the engineered HR features into eight higher-order behavioral
+One job: combine the engineered HR features into nine higher-order behavioral
 signals, each on a 0-100 scale, and hand those -- and only those -- to the
 models.
 
@@ -11,12 +11,12 @@ They are not, for three reasons that all matter to this problem statement:
 
 1. **Explainability.** A SHAP breakdown over 38 columns produces attributions
    like "``leave_days_change_ratio`` contributed 3.1 points", which no welfare
-   officer can act on. A breakdown over eight named signals produces
+   officer can act on. A breakdown over nine named signals produces
    "limited recovery time since last leave", which is directly actionable.
    Explainability is a stated PS requirement, and the feature space is where
    it is won or lost.
 
-2. **Stability.** Eight bounded signals are far less sensitive to a single
+2. **Stability.** Nine bounded signals are far less sensitive to a single
    missing or noisy column than 38 raw features, several of which are heavily
    correlated with each other.
 
@@ -416,6 +416,73 @@ def leave_deficit_signal(features: pd.DataFrame) -> np.ndarray:
     )
 
 
+def family_separation_signal(features: pd.DataFrame) -> np.ndarray:
+    """Whether the current posting separates the person from their family,
+    and how long it has done so.
+
+    Formula:
+        ``0.65 * (100 if family_separated else 0)``
+        ``+ 0.35 * saturate(months in current posting, 0 -> 24), zeroed when
+        not separated``
+
+    Args:
+        features: Engineered feature matrix.
+
+    Returns:
+        0-100 array. A person who is not separated scores 0; one separated at a
+        new posting scores 65; one separated for two years or more scores 100.
+
+    Rationale:
+        The problem statement names family separation directly, alongside
+        extended deployment and irregular hours, as a driver of the strain this
+        system exists to detect. It is also the one driver the organisation can
+        act on most concretely -- through posting and rotation decisions --
+        which is what makes it worth carrying as its own signal rather than
+        folding into ``posting_hardship_signal``.
+
+        Duration is included because separation is not a step change. The
+        difference between two months apart and two years apart is the whole
+        substance of the condition, and a bare binary would tell an officer
+        nothing they did not already know from the roster.
+
+    Framing:
+        This describes a **posting**, not a person. The human-readable label is
+        "Posted away from family" -- an establishment decision with a
+        consequence -- and not anything about the person's domestic life or how
+        they are coping with it. The system holds one bit from the roster and
+        how long the posting has run; it does not ask, hold, or infer anything
+        further, and nothing here should be read as a judgement about somebody's
+        family circumstances.
+
+    Note:
+        ``family_separated`` is a roster attribute rather than a point-in-time
+        measurement, so in this corpus it does not change across a person's
+        snapshots. A real HRMS feed in which it does change would need no code
+        change here: the signal reads whatever the feature row carries.
+    """
+    weights = settings.SIGNAL_COMPONENT_WEIGHTS["family_separation_signal"]
+    separated = (
+        features["family_separated"].fillna(False).astype(bool).to_numpy()
+    )
+
+    is_separated = np.where(separated, float(settings.SIGNAL_MAX), 0.0)
+
+    months = features["time_in_current_posting_months"].to_numpy(dtype="float64")
+    duration = normalize.saturating_scale(
+        months,
+        saturation_point=settings.FAMILY_SEPARATION_DURATION_SATURATION_MONTHS,
+        floor=0.0,
+    )
+    # Duration only means anything when there is a separation to have a
+    # duration. Without this, a long settled posting with family present would
+    # contribute to a separation signal.
+    duration = np.where(separated, duration, 0.0)
+
+    return _blend(
+        {"is_separated": is_separated, "separation_duration": duration}, weights
+    )
+
+
 # Registry mapping each signal name to the function that computes it. Iterating
 # a registry rather than writing eight call lines means adding a signal is one
 # entry here plus one entry in settings, and the order stays authoritative.
@@ -428,6 +495,7 @@ SIGNAL_FUNCTIONS = {
     "transfer_churn_signal": transfer_churn_signal,
     "training_load_signal": training_load_signal,
     "leave_deficit_signal": leave_deficit_signal,
+    "family_separation_signal": family_separation_signal,
 }
 
 if set(SIGNAL_FUNCTIONS) != set(SIGNAL_NAMES):
@@ -520,4 +588,5 @@ _REQUIRED_COLUMNS: Dict[str, List[str]] = {
     "transfer_churn_signal": ["transfer_count_past_2yrs", "time_since_last_transfer_days"],
     "training_load_signal": ["training_hours_last_3months"],
     "leave_deficit_signal": ["leave_entitlement_used_pct"],
+    "family_separation_signal": ["family_separated", "time_in_current_posting_months"],
 }

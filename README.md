@@ -30,7 +30,7 @@ python scripts/train_models.py --quick        # use --cv for grouped cross-valid
 # 3. Score all personnel, explain every case, generate recommendations & alerts (~6 min)
 python scripts/run_pipeline.py
 
-# 4. Run the automated test suite (127 passing unit tests)
+# 4. Run the automated test suite (134 passing unit tests)
 python -m unittest discover -s tests
 
 # 5. Serve the REST API and both frontends
@@ -76,7 +76,7 @@ deployment replaces.
 
 ## 🏛️ Core Architecture & Highlights
 
-1. **Zero LLM / Generative AI Path:** All scoring uses verified scikit-learn models (Gradient Boosting, $R^2 = 0.729$), explanations use exact Shapley value enumeration ($2^{10}=1024$ coalitions), and recommendations use a deterministic rule-based mapping engine.
+1. **Zero LLM / Generative AI Path:** All scoring uses verified scikit-learn models (Gradient Boosting, $R^2 = 0.807$), explanations use exact Shapley value enumeration ($2^{11}=2048$ coalitions), and recommendations use a deterministic rule-based mapping engine.
 2. **Acoustic-Only Voice Pipeline:** Analyzes pitch ($F_0$), speaking rate, pause ratios, jitter, and shimmer. **Zero speech-to-text / transcription** exists by construction.
 3. **Strict Privacy & Data Separation:** Direct identifiers are HMAC-SHA256 pseudonymized. Identity mapping is isolated in `data/identity_map.sqlite3` with an audited re-identification log. That file is **not committed** — it holds both the mapping and the salt that produced it, so a copy in the repository would undo the pseudonymisation for anyone who cloned it. It is created on the first pipeline run.
 4. **Structural Leak Prevention:** The commander view cannot receive individual-identifiable records — enforced by `rbac.assert_commander_safe()` recursive payload scanning and proved by `tests/test_rbac_api.py`.
@@ -95,7 +95,7 @@ personnel-welfare-intelligence/
 │   ├── ingestion/               ← CSV loading and schema validation
 │   ├── preprocessing/           ← Cleaning, normalisation, HMAC pseudonymisation vault
 │   ├── feature_engineering/     ← 14 point-in-time features, rolling windows, personal baselines
-│   ├── behavioral_engine/       ← 8 normalized (0–100) behavioral stress signals
+│   ├── behavioral_engine/       ← 9 normalized (0–100) behavioral stress signals
 │   ├── voice_pipeline/          ← Acoustic DSP feature extraction (no speech transcription)
 │   ├── models/                  ← 8 candidate models, person-disjoint training, selection, exact SHAP
 │   ├── post_model_analytics/    ← Risk bands, trend persistence, confidence heuristics, attribution
@@ -125,7 +125,7 @@ personnel-welfare-intelligence/
 │   └── data_dictionary.md       ← Complete data dictionary for all CSVs and JSONs
 │
 ├── scripts/                     ← Entry points for data generation, training, and pipeline
-├── tests/                       ← 91 automated unit tests verifying invariants & security
+├── tests/                       ← 134 automated unit tests verifying invariants & security
 ├── CodebaseGuide.md             ← Comprehensive in-depth technical walkthrough
 └── STATUS.md                    ← Transparent accounting of completed vs. deferred scope
 ```

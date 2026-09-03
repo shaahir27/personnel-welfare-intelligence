@@ -105,6 +105,72 @@ class TestSignalHumanLabels(unittest.TestCase):
                 )
 
 
+class TestFamilySeparationSignal(unittest.TestCase):
+    """The family separation signal, which the PS names as a stress driver.
+
+    It was absent from the first build by accident -- `family_separated` sat in
+    personnel.csv, carried 4.7% of the synthetic label's variance, and no
+    feature or signal read it.
+    """
+
+    def setUp(self) -> None:
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas not installed")
+
+    def _signal(self, separated: bool, months: float) -> float:
+        import pandas as pd
+
+        from backend.behavioral_engine.behavioral_signals import (
+            family_separation_signal,
+        )
+
+        frame = pd.DataFrame(
+            {
+                "family_separated": [separated],
+                "time_in_current_posting_months": [months],
+            }
+        )
+        return float(family_separation_signal(frame)[0])
+
+    def test_not_separated_scores_zero_regardless_of_posting_length(self) -> None:
+        for months in (0.0, 12.0, 60.0):
+            with self.subTest(months=months):
+                self.assertEqual(self._signal(False, months), 0.0)
+
+    def test_separated_at_a_new_posting_scores_the_binary_weight(self) -> None:
+        # 0.65 of the scale from the separation itself, none from duration.
+        self.assertAlmostEqual(self._signal(True, 0.0), 65.0, places=4)
+
+    def test_separated_beyond_saturation_scores_full(self) -> None:
+        months = settings.FAMILY_SEPARATION_DURATION_SATURATION_MONTHS + 12
+        self.assertAlmostEqual(self._signal(True, months), 100.0, places=4)
+
+    def test_duration_only_counts_when_separated(self) -> None:
+        long_posting = settings.FAMILY_SEPARATION_DURATION_SATURATION_MONTHS
+        self.assertGreater(
+            self._signal(True, long_posting), self._signal(True, 0.0)
+        )
+        self.assertEqual(self._signal(False, long_posting), 0.0)
+
+    def test_signal_is_registered_everywhere_it_must_be(self) -> None:
+        name = "family_separation_signal"
+        self.assertIn(name, settings.BEHAVIORAL_SIGNAL_NAMES)
+        self.assertIn(name, settings.MODEL_FEATURE_NAMES)
+        self.assertIn(name, settings.SIGNAL_HUMAN_LABELS)
+        self.assertIn(name, settings.SIGNAL_COMPONENT_WEIGHTS)
+
+    def test_raw_roster_field_may_never_reach_a_commander(self) -> None:
+        self.assertIn("family_separated", settings.COMMANDER_FORBIDDEN_FIELDS)
+
+    def test_label_describes_a_posting_not_a_person(self) -> None:
+        label = settings.SIGNAL_HUMAN_LABELS["family_separation_signal"].lower()
+        self.assertIn("posted", label)
+        for word in ("family problems", "domestic", "marital", "personal"):
+            self.assertNotIn(word, label)
+
+
 class TestBehavioralEngineImport(unittest.TestCase):
     """Importing the behavioral engine settings-only layer must succeed.
     The full module requires pandas which may not be installed in this env;

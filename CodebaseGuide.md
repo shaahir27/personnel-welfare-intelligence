@@ -36,7 +36,7 @@
 7. [Scoring / pipeline flow — step by step](#7-scoring--pipeline-flow--step-by-step)
 8. [API request flow — who calls what](#8-api-request-flow--who-calls-what)
 9. [Privacy architecture](#9-privacy-architecture)
-10. [The 8 behavioral signals explained](#10-the-8-behavioral-signals-explained)
+10. [The 9 behavioral signals explained](#10-the-9-behavioral-signals-explained)
 11. [The voice pipeline explained](#11-the-voice-pipeline-explained)
 12. [Role-based access control and JWT authentication](#12-role-based-access-control-and-jwt-authentication)
 13. [Alert rules — the notification system](#13-alert-rules--the-notification-system)
@@ -89,7 +89,7 @@ personnel-welfare-intelligence/
 │   ├── ingestion/               ← Load + validate CSVs
 │   ├── preprocessing/           ← Clean, normalise, pseudonymise
 │   ├── feature_engineering/     ← Point-in-time features, baselines, windows
-│   ├── behavioral_engine/       ← 8 signals from features
+│   ├── behavioral_engine/       ← 9 signals from features
 │   ├── voice_pipeline/          ← Acoustic features from audio
 │   ├── models/                  ← 8 candidates, training, selection, SHAP
 │   ├── post_model_analytics/    ← Risk bands, trends, confidence, attribution
@@ -564,7 +564,7 @@ A baseline that includes the observation being judged would drag the deviation t
 
 **Import-time safety check:** Asserts all `SIGNAL_COMPONENT_WEIGHTS` dicts sum to 1.0. Fails loud at import, not at runtime.
 
-**The 8 signals and their formulas:**
+**The 9 signals and their formulas:**
 
 | Signal | Formula |
 |---|---|
@@ -576,6 +576,7 @@ A baseline that includes the observation being judged would drag the deviation t
 | `transfer_churn_signal` | 0.70 × saturate(transfer_count, 0→4) + 0.30 × inverse(days_since_last_transfer, 0→365) |
 | `training_load_signal` | saturate(training_hours_3months, 0→120 h) |
 | `leave_deficit_signal` | inverse(leave_entitlement_used_pct, 0→100%) |
+| `family_separation_signal` | 0.65·(100 if family_separated) + 0.35·sat(time_in_current_posting_months, 0→24 mo) |
 
 **`_blend()` helper:**
 - NaN components are treated as absent; remaining weights are re-normalised
@@ -749,7 +750,7 @@ Each person contributes 6 snapshot rows that are highly correlated. A random row
 **Role:** Answer "why did this person get this score?" with numbers that add up to the score.
 
 **Method:** Exact Shapley values (interventional/marginal value function).
-- Enumerates all 2^n coalitions (with 10 features = 1,024 coalitions)
+- Enumerates all 2^n coalitions (with 11 features = 2,048 coalitions)
 - `v(S) = mean over background sample of f(x on S, b elsewhere)`
 - Satisfies **local accuracy**: contributions sum exactly to `f(x) - mean(f(background))`
 - The code asserts local accuracy on every explanation call
@@ -924,7 +925,7 @@ Every response passes through `rbac.assert_commander_safe()` which walks the ent
 - Append-only JSONL at `data/responses/check_in_responses.jsonl`, not in `data/processed/` — the pipeline rewrites that directory wholesale and would delete them
 - Validates rather than repairs: an out-of-range value or an oversized free-text answer is rejected, and a submission with one bad answer stores none of it
 - `submissions_for()` filters by pseudonym, so a read only ever returns the caller's own answers
-- **Answers are not a model input.** The eight behavioral signals come from HR records alone, so answering or not answering cannot move anybody's score — which is what makes "entirely optional" on that screen literally true
+- **Answers are not a model input.** The nine behavioral signals come from HR records alone, so answering or not answering cannot move anybody's score — which is what makes "entirely optional" on that screen literally true
 
 #### `wellness_questions.json`
 - Fixed question bank keyed by behavioral signal name
@@ -1170,7 +1171,7 @@ Single-page personal wellness app.
 
 **`src/screens/WellbeingHome.js`** — Main dashboard:
 - Fetches `/api/personal/{id}/summary`
-- Shows risk score gauge, trend arrow, signal bars for all 8 signals, top contributing factors
+- Shows risk score gauge, trend arrow, signal bars for all 9 signals, top contributing factors
 
 **`src/screens/TrendView.js`** — Score history:
 - Fetches `/api/personal/{id}/history`
@@ -1362,7 +1363,7 @@ python scripts/train_models.py --quick
       ├─ voice_baseline builds EMA baselines
       └─ voice_stress_signal computes 0-100 deviation
    └─ behavioral_signals.compute_behavioral_signals(features, voice_frame)
-      └─ computes 8 signals + 2 voice columns → 4800 rows × 10 signal cols
+      └─ computes 9 signals + 2 voice columns → 4800 rows × 11 signal cols
    → PipelineOutput
 
 2. pipeline.load_labels()
@@ -1578,7 +1579,7 @@ The privacy design has multiple independent layers:
 
 ---
 
-## 10. The 8 behavioral signals explained
+## 10. The 9 behavioral signals explained
 
 All signals: 0 = no welfare concern visible, 100 = maximum concern. They describe **organisational conditions**, not personal failings.
 
@@ -1593,6 +1594,7 @@ All signals: 0 = no welfare concern visible, 100 = maximum concern. They describ
 | `training_load_signal` | Training hours past 3 months on top of operational duty | "Training commitments on top of operational duty" |
 | `leave_deficit_signal` | Leave entitlement going unused (annual gap, not recency) | "Leave entitlement largely unused" |
 | `voice_stress_signal` (optional) | Departure from person's own acoustic baseline | "Voluntary voice check-in differs from personal baseline" |
+| `family_separation_signal` | Posting keeps the person away from family, and for how long | "Posted away from family" |
 
 **`leave_deficit_signal` vs `recovery_pattern_signal`:**
 Someone who took leave last week but has used only 20% of their annual entitlement has:

@@ -228,7 +228,23 @@ SIGNAL_COMPONENT_WEIGHTS: Final[Dict[str, Dict[str, float]]] = {
         "transfer_count": 0.70,
         "transfer_recency": 0.30,
     },
+    # Whether the current posting separates the person from their family, and
+    # how long it has done so. The fact of separation carries most of the
+    # weight because it is binary and unambiguous; duration is the term that
+    # distinguishes a recent posting from a long-running one.
+    "family_separation_signal": {
+        "is_separated": 0.65,
+        "separation_duration": 0.35,
+    },
 }
+
+# Months of continuous separation at which the duration component of the
+# family separation signal reaches its maximum. ASSUMPTION: set to the same
+# 24-month horizon as the hard-area tenure target, on the reasoning that the
+# rotation policy's own idea of "too long in one place" is the most defensible
+# reference available, and inventing a different number for family separation
+# would imply a precision nobody has.
+FAMILY_SEPARATION_DURATION_SATURATION_MONTHS: Final[float] = 24.0
 
 # Night-shift departure (in personal-baseline SDs) at which the schedule
 # signal's second component saturates. ASSUMPTION.
@@ -267,6 +283,7 @@ BEHAVIORAL_SIGNAL_NAMES: Final[Tuple[str, ...]] = (
     "transfer_churn_signal",
     "training_load_signal",
     "leave_deficit_signal",
+    "family_separation_signal",
 )
 
 # The optional voice signal is appended only when present. Models are trained
@@ -293,6 +310,7 @@ SIGNAL_HUMAN_LABELS: Final[Dict[str, str]] = {
     "transfer_churn_signal": "Frequent transfers in a short period",
     "training_load_signal": "Training commitments on top of operational duty",
     "leave_deficit_signal": "Leave entitlement largely unused",
+    "family_separation_signal": "Posted away from family",
     "voice_stress_signal": "Voluntary voice check-in differs from personal baseline",
     "voice_signal_present": "Voice check-in data availability",
 }
@@ -611,6 +629,10 @@ COMMANDER_FORBIDDEN_FIELDS: Final[Tuple[str, ...]] = (
     "voice_stress_signal",
     "recommendations",
     "case_id",
+    # A person's domestic circumstances are the least aggregable thing in the
+    # system. The signal derived from it is unit-aggregable; the raw field is
+    # not, and must not travel with a payload by accident.
+    "family_separated",
 )
 
 # ---------------------------------------------------------------------------

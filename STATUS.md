@@ -20,7 +20,7 @@ python scripts/generate_voice_audio.py
 # 2. Train and compare all eight candidate models, register the winner (~40 s)
 python scripts/train_models.py --quick        # add --cv for grouped cross-validation
 
-# 3. Run the full pipeline and write the dashboard payloads (~60 s)
+# 3. Run the full pipeline and write the dashboard payloads (~6 min)
 python scripts/run_pipeline.py
 
 # 4. Serve the API and both frontends
@@ -49,34 +49,61 @@ importable.
 | --- | --- | --- |
 | **A** Synthetic real-world-anchored dataset | `scripts/generate_synthetic_data.py`, `scripts/generate_voice_audio.py` | ✅ 800 personnel, 9 CSVs, 100 WAVs. Sourced anchors reproduced and self-checked on every run. |
 | **B** Ingestion, cleaning, pseudonymisation | `backend/ingestion/`, `backend/preprocessing/` | ✅ Schema validation, non-repairing validators, HMAC pseudonymisation with a separate identity-map database and an audited re-identification path. |
-| **C** Feature engineering | `backend/feature_engineering/` | ✅ 14 point-in-time features (all 12 PS indicators), 7/30/90-day windows, rate-of-change ratios, per-person baselines. 4,800 rows × 38 columns. |
-| **D** Predictive Behavioral Engine | `backend/behavioral_engine/` | ✅ Eight documented 0–100 signals; this is what feeds the models, not the raw features. |
+| **C** Feature engineering | `backend/feature_engineering/` | ✅ 14 point-in-time features (all 12 PS indicators), 7/30/90-day windows, rate-of-change ratios, per-person baselines. 4,800 rows × 39 columns. |
+| **D** Predictive Behavioral Engine | `backend/behavioral_engine/` | ✅ Nine documented 0–100 signals; this is what feeds the models, not the raw features. |
 | **E** Voice acoustic pipeline | `backend/voice_pipeline/` | ✅ Runs end to end on 100 real WAVs. Pitch, rate, pauses, intensity, cycle-level jitter and shimmer. No transcription anywhere. Emits exactly one deviation number. |
-| **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split. Gradient Boosting selected (R² 0.729, MAE 5.46). Exact Shapley by full coalition enumeration, additivity asserted on every call, ~0.2 s per case. Versioned registry with metadata. |
+| **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split. Gradient Boosting selected (R² 0.807, MAE 4.57). Exact Shapley by full coalition enumeration, additivity asserted on every call, ~0.2 s per case. Versioned registry with metadata. |
 | **G** Post-model analytics | `backend/post_model_analytics/` | ✅ Risk bands, trend/persistence, data-completeness confidence (honestly labelled a heuristic), individual-vs-systemic attribution with small-cell suppression. |
 | **H** Near-miss detection | `backend/near_miss/` | ✅ Unit-level, independent of individual scores. One live finding on the current corpus (U016). |
-| **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json`, returned by `/api/officer/case/{id}`, rendered on the case detail screen. 630 of 800 cases carry recommendations. |
-| **J** Alert rules | `backend/alerts/alert_rules.py` | ✅ 4 graduated rules: personal notification (always), officer alert (High, persistent Moderate, rising High), commander near-miss alert. Low-confidence suppression for officer/commander alerts. Written to `alerts.json` (1,320 alerts); personal notifications render in the personal app, officer alerts on the case detail screen. |
+| **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json`, returned by `/api/officer/case/{id}`, rendered on the case detail screen. 617 of 800 cases carry recommendations. |
+| **J** Alert rules | `backend/alerts/alert_rules.py` | ✅ 4 graduated rules: personal notification (always), officer alert (High, persistent Moderate, rising High), commander near-miss alert. Low-confidence suppression for officer/commander alerts. Written to `alerts.json` (1,325 alerts); personal notifications render in the personal app, officer alerts on the case detail screen. |
 | **K** JWT authentication | `backend/auth/` | ✅ HS256 via stdlib hmac+base64, PyJWT when importable. `POST /api/auth/login` issues tokens against PBKDF2 credential hashes; both frontends sign in and send `Authorization: Bearer`. Plain role header requires `PWIEWS_DEBUG_AUTH=1` and is off by default. |
 | **L** API | `backend/api/` | ✅ 14 endpoints serving both frontends from precomputed output. Role-scoped, commander payloads guarded. `POST /api/auth/login` and `POST /api/personal/{id}/check-in` are the only write paths. |
 | **M** Both frontends | `frontend/` | ✅ Personal app (4 screens) and officer dashboard (4 screens), both wired to live pipeline output, verified rendering with no console errors. |
 | **N** Docs suite | `docs/` | ✅ `data_dictionary.md`, `ps_alignment_matrix.md`, `privacy_policy.md`, `model_comparison_report.md`, plus per-module READMEs. |
-| **O** Test suite | `tests/` | ✅ 127 tests, 0 failures. RBAC leak-proof test, end-to-end route/auth tests, JWT auth tests, alert rules tests, recommendation engine tests, check-in store tests, voice pipeline invariant tests, behavioral engine tests. |
+| **O** Test suite | `tests/` | ✅ 134 tests, 0 failures. RBAC leak-proof test, end-to-end route/auth tests, JWT auth tests, alert rules tests, recommendation engine tests, check-in store tests, voice pipeline invariant tests, behavioral engine tests. |
 
 **Model comparison result** (held-out, split by person, 640 train / 160 test people):
 
 | Model | MAE | RMSE | R² | Band acc | High recall |
 | --- | --- | --- | --- | --- | --- |
-| **Gradient Boosting (selected)** | **5.46** | **6.96** | **0.729** | 0.781 | 0.651 |
-| Ridge Regression | 5.49 | 7.01 | 0.725 | 0.772 | 0.624 |
-| Lasso Regression | 5.49 | 7.01 | 0.724 | 0.771 | 0.624 |
-| Linear Regression | 5.49 | 7.01 | 0.724 | 0.771 | 0.624 |
-| MLP Regressor | 5.55 | 7.02 | 0.724 | 0.773 | 0.691 |
-| SVR (RBF) | 5.56 | 7.09 | 0.718 | 0.777 | 0.691 |
-| Hist Gradient Boosting | 5.60 | 7.14 | 0.715 | 0.764 | 0.631 |
-| Random Forest | 5.80 | 7.34 | 0.698 | 0.771 | 0.658 |
+| **Gradient Boosting (selected)** | **4.57** | **5.86** | **0.807** | 0.807 | 0.671 |
+| MLP Regressor | 4.59 | 5.95 | 0.802 | 0.811 | 0.732 |
+| Hist Gradient Boosting | 4.63 | 5.96 | 0.801 | 0.806 | 0.664 |
+| SVR (RBF) | 4.85 | 6.27 | 0.780 | 0.815 | 0.732 |
+| Random Forest | 4.96 | 6.34 | 0.774 | 0.801 | 0.651 |
+| Lasso Regression | 4.93 | 6.41 | 0.770 | 0.801 | 0.644 |
+| Ridge Regression | 4.94 | 6.41 | 0.770 | 0.801 | 0.644 |
+| Linear Regression | 4.94 | 6.41 | 0.770 | 0.804 | 0.651 |
 
 Full results in `ml/evaluation/model_comparison_results.json`.
+
+### What R² does and does not show here
+
+**It is not evidence that this system predicts welfare risk.** The training label
+is produced by `latent_welfare_risk()` in the data generator — a weighted formula
+over the same drivers the features encode. The model is recovering a known
+formula, not predicting an outcome. Establishing predictive validity needs
+labels from validated welfare assessments, which this build does not have and
+could not have.
+
+What it does show is that the pipeline carries information end to end, and the
+size of the gap is itself informative. Decomposing the label's variance:
+
+| Component | Share of label variance |
+| --- | --- |
+| Injected noise (σ = 4.5 points) | 10.6% |
+| `exposure_propensity` — a latent driver, deliberately not a feature | 1.0% |
+| **R² ceiling for any model given what it can see** | **≈ 0.883** |
+| Achieved | 0.807 |
+
+The remaining 0.076 is information the behavioral-signal layer gives up on
+purpose: saturating transforms, weighted blends, and monthly-grain duty
+pro-rated into week-scale windows. The model does not trivially invert the
+generator, because the signal layer is lossy in exchange for explainability.
+
+`family_separation_signal` moved R² from 0.729 to 0.807 on its own. That is the
+size of the hole it was filling.
 
 ---
 
@@ -140,7 +167,7 @@ Each is documented in the relevant module README:
 | Intended | Used instead | Consequence |
 | --- | --- | --- |
 | FastAPI | **Starlette** (FastAPI's own ASGI foundation) | Structure kept FastAPI-shaped — routes split by role, single dependency-style principal extraction. Porting is mechanical. |
-| `shap` | **Exact Shapley by full coalition enumeration** (`explainability_shap.py`) | With 10 features, 2¹⁰ coalitions are enumerated outright. This is exact, not sampled. Local accuracy is asserted on every call. The library is used automatically when importable. |
+| `shap` | **Exact Shapley by full coalition enumeration** (`explainability_shap.py`) | With 11 features, 2¹¹ coalitions are enumerated outright. This is exact, not sampled. Local accuracy is asserted on every call. The library is used automatically when importable. |
 | `librosa` | **numpy + scipy.signal DSP written directly** | Autocorrelation F0 with parabolic refinement, RMS-envelope voicing, energy-peak syllable counting, peak-picked period marking for jitter/shimmer. Verified to recover the injected acoustic properties. |
 | XGBoost / LightGBM | **sklearn `GradientBoostingRegressor` + `HistGradientBoostingRegressor`** | The brief asked to check installability before committing; this is that check's outcome. |
 | React / npm | **Dependency-free ES modules** | No build step, runs offline. One module per screen; `CommanderUnitView` is structurally separate from `CaseDetail` as specified. |
@@ -177,7 +204,7 @@ Each is documented in the relevant module README:
 
 - **No LLM or generative AI anywhere** in the scoring, classification or
   recommendation path. Scores come from a trained gradient-boosting regressor
-  over eight documented arithmetic signals; explanations come from exact
+  over nine documented arithmetic signals; explanations come from exact
   Shapley computation; check-in questions come from a rule-based lookup against
   a fixed JSON bank.
 - **The voice pipeline analyses how someone speaks, never what they say.** No

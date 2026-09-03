@@ -69,7 +69,19 @@ HR_FEATURE_NAMES: Sequence[str] = (
 
 # Context columns carried alongside the features. Not model inputs on their
 # own, but the behavioral engine and the systemic analysis need them.
-CONTEXT_COLUMNS: Sequence[str] = ("unit_id", "posting_type", "is_jawan_rank")
+#
+# ``family_separated`` is here rather than in HR_FEATURE_NAMES because it is a
+# roster attribute, not a point-in-time measurement -- nothing about it is
+# computed from a trailing window. The behavioral engine reads it directly;
+# it is never itself a model input, and it is listed in
+# ``settings.COMMANDER_FORBIDDEN_FIELDS`` so it cannot travel into a
+# commander payload.
+CONTEXT_COLUMNS: Sequence[str] = (
+    "unit_id",
+    "posting_type",
+    "is_jawan_rank",
+    "family_separated",
+)
 
 # ASSUMPTION: a person with no leave record at all in the loaded history is
 # treated as having gone the full history window without leave, rather than

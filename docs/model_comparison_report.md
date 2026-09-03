@@ -15,7 +15,7 @@ split, reporting identical metrics for each, and applying a documented
 selection rule is what makes the choice inspectable rather than arbitrary.
 
 The eight candidates cover the major algorithm families relevant to a
-supervised regression task of this size (800 people, 10 features):
+supervised regression task of this size (800 people, 11 features):
 
 | Family | Algorithms |
 |---|---|
@@ -46,14 +46,14 @@ memorise the person's baseline rather than learning to generalise.
 
 | Model | MAE | RMSE | R² | Band accuracy | High recall |
 |---|---|---|---|---|---|
-| **Gradient Boosting (selected)** | **5.46** | **6.96** | **0.729** | 0.781 | 0.651 |
-| Ridge Regression | 5.49 | 7.01 | 0.725 | 0.772 | 0.624 |
-| Lasso Regression | 5.49 | 7.01 | 0.724 | 0.771 | 0.624 |
-| Linear Regression | 5.49 | 7.01 | 0.724 | 0.771 | 0.624 |
-| MLP Regressor | 5.55 | 7.02 | 0.724 | 0.773 | 0.691 |
-| SVR (RBF) | 5.56 | 7.09 | 0.718 | 0.777 | 0.691 |
-| Hist Gradient Boosting | 5.60 | 7.14 | 0.715 | 0.764 | 0.631 |
-| Random Forest | 5.80 | 7.34 | 0.698 | 0.771 | 0.658 |
+| **Gradient Boosting (selected)** | **4.57** | **5.86** | **0.807** | 0.807 | 0.671 |
+| MLP Regressor | 4.59 | 5.95 | 0.802 | 0.811 | 0.732 |
+| Hist Gradient Boosting | 4.63 | 5.96 | 0.801 | 0.806 | 0.664 |
+| SVR (RBF) | 4.85 | 6.27 | 0.780 | 0.815 | 0.732 |
+| Random Forest | 4.96 | 6.34 | 0.774 | 0.801 | 0.651 |
+| Lasso Regression | 4.93 | 6.41 | 0.770 | 0.801 | 0.644 |
+| Ridge Regression | 4.94 | 6.41 | 0.770 | 0.801 | 0.644 |
+| Linear Regression | 4.94 | 6.41 | 0.770 | 0.804 | 0.651 |
 
 Full per-fold results: `ml/evaluation/model_comparison_results.json`
 
@@ -83,38 +83,60 @@ rather than a post-hoc judgement. The reason:
 - Neural networks and SVR produce feature attributions only via approximations
   (permutation importance, LIME) that are neither exact nor locally accurate.
 
-Gradient Boosting had the highest R² among tree-based models (0.729).
-Ridge Regression had R² = 0.725 — within the 0.02 margin — so the
-tree-preference rule selected Gradient Boosting.
-
-MLP Regressor had R² = 0.724 (also within margin) but additionally loses
-on explainability grounds.
+Gradient Boosting had the highest R² of any candidate (0.807). The best
+non-tree candidate, the MLP Regressor, reached R² = 0.802 — within the 0.02
+margin — so the tree-preference rule selected Gradient Boosting and the
+exact, fast SHAP path that comes with it.
 
 ---
 
-## 5. Why the top result is defensible at R² = 0.729
+## 5. What R² = 0.807 does and does not establish
 
-The target variable (`welfare_risk_score`) is a composite of 8 behavioral
-signals that are themselves derived from HR administrative records.
-Administrative records have well-known quality limitations:
+**It does not establish that this system predicts welfare risk.** The target
+(`welfare_risk_score`) is produced by `latent_welfare_risk()` in
+`scripts/generate_synthetic_data.py` — a weighted formula over the same
+drivers the features encode, plus an interaction term and injected noise. The
+model is recovering a known formula. Real predictive validity would require
+labels from validated welfare assessments conducted by qualified personnel,
+which no hackathon build can have.
+
+What it does establish is that the pipeline carries information end to end,
+and the size of the shortfall is itself the interesting number:
+
+| Component of the label's variance | Share |
+|---|---|
+| Injected noise (σ = 4.5 points) | 10.6% |
+| `exposure_propensity`, a latent driver deliberately excluded from the features | 1.0% |
+| **Ceiling for any model given what it can see** | **≈ 0.883** |
+| Achieved | 0.807 |
+
+The model sits 0.076 below the ceiling rather than on it. That gap is
+information the behavioral-signal layer gives up on purpose — saturating
+transforms, weighted blends, and monthly-grain duty pro-rated into week-scale
+windows — which is the price paid for a nine-term explanation an officer can
+read instead of a 38-column one they cannot.
+
+Administrative records also have quality limits that no model removes:
 - Leave records reflect *approved* leave, not *availed* leave in some HRMS implementations.
 - Duty hours are often recorded at monthly grain, not daily.
 - Training records may lag actual completion by weeks.
 
-An R² of 0.729 on clean synthetic data, with these features, is consistent
-with published benchmark ranges for HR-derived welfare indicators. The model
-explains 73% of variance in the target — enough to rank cases reliably and
-prioritise officer attention, which is the system's purpose.
-
 The system does not claim clinical-grade accuracy. Every score is shown with
-a confidence level and disclaimer.
+a confidence level and a disclaimer.
+
+### Note on the previous figure
+
+An earlier build reported R² = 0.729. The difference is one feature:
+`family_separated` was present in `personnel.csv` and named in the problem
+statement as a stress driver, but no feature or signal read it. Adding
+`family_separation_signal` accounts for the entire improvement.
 
 ---
 
 ## 6. SHAP explainability
 
 Exact Shapley values are computed via full coalition enumeration over the
-10-feature space (2¹⁰ = 1024 coalitions). This is exact — not sampled.
+11-feature space (2¹¹ = 2048 coalitions). This is exact — not sampled.
 
 Local accuracy (efficiency property) is asserted on every call:
 ```

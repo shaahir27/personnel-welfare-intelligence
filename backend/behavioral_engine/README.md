@@ -3,13 +3,13 @@
 ## What this module does
 
 This is the **Predictive Behavioral Analytics Engine** (PS Expected Solution
-component #3). It combines the engineered HR features into eight higher-order
+component #3). It combines the engineered HR features into nine higher-order
 behavioral signals, each on a 0–100 scale, and those signals — not the raw
 features — are what the risk models consume.
 
 | File | Job |
 | --- | --- |
-| `behavioral_signals.py` | Compute the eight signals; expose the registry that defines them. |
+| `behavioral_signals.py` | Compute the nine signals; expose the registry that defines them. |
 
 ## Inputs and outputs
 
@@ -22,7 +22,7 @@ per input row with:
 
 - keys `pseudonym_id`, `snapshot_date`
 - context `unit_id`, `posting_type`, `is_jawan_rank`
-- the eight signals below
+- the nine signals below
 - `voice_stress_signal` and `voice_signal_present`
 
 | Signal | Formula |
@@ -35,6 +35,7 @@ per input row with:
 | `transfer_churn_signal` | 0.70 · sat(`transfer_count_past_2yrs`, 0→4) + 0.30 · inv-sat(`time_since_last_transfer_days`, 0→365 d) |
 | `training_load_signal` | sat(`training_hours_last_3months`, 0→120 h) |
 | `leave_deficit_signal` | inv-sat(`leave_entitlement_used_pct`, 0→100 %) |
+| `family_separation_signal` | 0.65·(100 if `family_separated`) + 0.35·sat(`time_in_current_posting_months`, 0→24 mo), duration zeroed when not separated |
 
 `sat` is `normalize.saturating_scale` (linear to the saturation point, flat
 above); `inv-sat` is its inverse for quantities where *low* is the warning
@@ -58,11 +59,11 @@ statement:
 
 1. **Explainability.** A SHAP breakdown over 38 columns yields attributions
    like "`leave_days_change_ratio` contributed 3.1 points", which no welfare
-   officer can act on. A breakdown over eight named signals yields "limited
+   officer can act on. A breakdown over nine named signals yields "limited
    recovery time since last leave", which maps directly onto an intervention.
    Explainability is a stated PS requirement, and the feature space is where it
    is won or lost — not in the explainer.
-2. **Stability.** Eight bounded signals are far less sensitive to one missing
+2. **Stability.** Nine bounded signals are far less sensitive to one missing
    or noisy column than 38 raw features, many of them heavily correlated.
 3. **Auditability.** Every signal is a documented arithmetic formula over named
    inputs, recomputable by hand. The model contributes the weighting *between*
@@ -116,6 +117,30 @@ surface.
 Per the JPC finding that 80 %+ of CRPF personnel cannot avail weekly offs, a
 weekly off in a high-tempo unit is frequently notional. Leave is the recovery
 that actually happens, so it carries 0.60 against 0.40.
+
+### Why family separation is its own signal, and how it is framed
+
+The problem statement names family separation directly, alongside extended
+deployment and irregular hours. It is also the driver the organisation can act
+on most concretely, through posting and rotation decisions — which is why it is
+carried separately rather than folded into `posting_hardship_signal`.
+
+Duration is in the formula because separation is not a step change. Two months
+apart and two years apart are different conditions, and a bare binary would tell
+an officer nothing the roster does not already say.
+
+**On framing.** This signal describes a *posting*, not a person. Its label is
+"Posted away from family" — an establishment decision with a consequence. The
+system holds one bit from the roster and how long the posting has run; it does
+not ask, hold, or infer anything about somebody's domestic life or how they are
+handling it, and the label is written so that nothing on a screen can be read as
+a judgement about their family. The raw `family_separated` field is listed in
+`settings.COMMANDER_FORBIDDEN_FIELDS`: the derived signal aggregates to unit
+level, the underlying fact about one person does not.
+
+This signal was missing from the first build by accident. `family_separated` sat
+unused in `personnel.csv` while carrying 4.7 % of the synthetic label's
+variance; adding it moved model R² from 0.729 to 0.807.
 
 ### Why the tenure-overrun term applies only to hard-area postings
 

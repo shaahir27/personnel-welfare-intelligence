@@ -834,7 +834,7 @@ def build_ground_truth_labels(
 
     Returns:
         DataFrame with ``personnel_id``, ``snapshot_date``,
-        ``welfare_risk_score``.
+        ``synthetic_welfare_risk_score``.
 
     Note:
         Snapshot dates match those the feature pipeline computes features for,
@@ -933,7 +933,7 @@ def build_ground_truth_labels(
                 {
                     "personnel_id": pid,
                     "snapshot_date": snap.date().isoformat(),
-                    "welfare_risk_score": round(score, 3),
+                    "synthetic_welfare_risk_score": round(score, 3),
                 }
             )
     return pd.DataFrame(rows)
@@ -1017,8 +1017,8 @@ def _summarise(tables: Dict[str, pd.DataFrame]) -> str:
         f"  full-entitlement fraction   {full_users:6.3f}   target ~{settings.LEAVE_FULL_ENTITLEMENT_USER_FRACTION:.3f}",
         f"  jawan mean daily duty hrs   {jawan_duty['mean_daily_duty_hours'].mean():6.2f}   target {settings.JAWAN_DUTY_HOURS_PER_DAY_RANGE}",
         f"  mean weekly-off availment   {offs.mean():6.3f}   (JPC: 80%+ cannot avail)",
-        f"  mean risk label             {tables['ground_truth_labels']['welfare_risk_score'].mean():6.2f}",
-        f"  risk label sd               {tables['ground_truth_labels']['welfare_risk_score'].std():6.2f}",
+        f"  mean risk label             {tables['ground_truth_labels']['synthetic_welfare_risk_score'].mean():6.2f}",
+        f"  risk label sd               {tables['ground_truth_labels']['synthetic_welfare_risk_score'].std():6.2f}",
     ]
     return "\n".join(lines)
 

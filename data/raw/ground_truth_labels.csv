@@ -1,4 +1,4 @@
-personnel_id,snapshot_date,welfare_risk_score
+personnel_id,snapshot_date,synthetic_welfare_risk_score
 P00001,2026-04-04,39.105
 P00001,2026-05-04,35.492
 P00001,2026-06-03,44.291

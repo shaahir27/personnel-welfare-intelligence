@@ -124,11 +124,16 @@ def main(run_cross_validation: bool = False) -> int:
         training_people=carve.fit_people,
         conformal=conformal_block,
         deployed_metrics=deployed_metrics,
+        label_provenance=settings.LABEL_PROVENANCE,
     )
     print(f"Registered: {version_dir}")
 
     # Machine-readable comparison, for the report and for any later re-run.
     comparison = {
+        # First key in the file, so it is the first thing read. Every number
+        # below is measured against the label this sentence names.
+        "label_provenance": settings.LABEL_PROVENANCE,
+        "training_label": settings.TRAINING_LABEL_NAME,
         "split": {
             "train_rows": len(split.y_train),
             "test_rows": len(split.y_test),
@@ -165,6 +170,8 @@ def main(run_cross_validation: bool = False) -> int:
     results_path = settings.EVALUATION_DIR / "model_comparison_results.json"
     results_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
     print(f"Comparison results: {results_path}")
+    print("")
+    print(f"Label provenance: {settings.LABEL_PROVENANCE}")
     return 0
 
 

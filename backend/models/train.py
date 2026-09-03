@@ -126,7 +126,7 @@ def build_modelling_dataset(
     Args:
         signals: Output of ``behavioral_engine.compute_behavioral_signals``.
         labels: Frame with ``pseudonym_id``, ``snapshot_date`` and the target
-            column named by ``settings.MODEL_TARGET_NAME``.
+            column named by ``settings.TRAINING_LABEL_NAME``.
         feature_names: Model input columns, in the fixed configured order.
 
     Returns:
@@ -143,7 +143,7 @@ def build_modelling_dataset(
         raise KeyError(f"signal frame is missing model feature(s): {missing}")
 
     merged = signals.merge(
-        labels[[ID_COLUMN, "snapshot_date", settings.MODEL_TARGET_NAME]],
+        labels[[ID_COLUMN, "snapshot_date", settings.TRAINING_LABEL_NAME]],
         on=[ID_COLUMN, "snapshot_date"],
         how="inner",
         validate="1:1",
@@ -155,7 +155,7 @@ def build_modelling_dataset(
         )
     return (
         merged[list(feature_names)],
-        merged[settings.MODEL_TARGET_NAME],
+        merged[settings.TRAINING_LABEL_NAME],
         merged[ID_COLUMN],
     )
 

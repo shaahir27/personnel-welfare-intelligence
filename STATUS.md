@@ -52,7 +52,7 @@ importable.
 | **C** Feature engineering | `backend/feature_engineering/` | ✅ 14 point-in-time features (all 12 PS indicators), 7/30/90-day windows, rate-of-change ratios, per-person baselines. 4,800 rows × 39 columns. |
 | **D** Predictive Behavioral Engine | `backend/behavioral_engine/` | ✅ Nine documented 0–100 signals; this is what feeds the models, not the raw features. |
 | **E** Voice acoustic pipeline | `backend/voice_pipeline/` | ✅ Runs end to end on 100 real WAVs. Pitch, rate, pauses, intensity, cycle-level jitter and shimmer. No transcription anywhere. Emits exactly one deviation number. |
-| **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split keyed on a salt-independent person code. Gradient Boosting selected (R² 0.821, MAE 4.51). The deployed model is fitted on 512 training people and **calibrated by split conformal prediction** on the other 128 (±9.9 points at 90%, verified 91.5% on the 160 test people). Exact Shapley by full coalition enumeration, additivity asserted on every call. Versioned registry with metadata. |
+| **F** Model training + comparison + SHAP | `backend/models/`, `ml/evaluation/` | ✅ All 8 algorithms train on one **person-disjoint** split keyed on a salt-independent person code. Gradient Boosting selected (R² 0.821, MAE 4.51). The deployed model is fitted on 512 training people and **calibrated by split conformal prediction** on the other 128 (±9.9 points at 90%, verified 91.5% on the 160 test people). Exact Shapley by full coalition enumeration, additivity asserted on every call. Versioned registry whose metadata carries the label provenance every metric above is measured against. |
 | **G** Post-model analytics | `backend/post_model_analytics/` | ✅ Risk bands with calibrated intervals and band certainty (599 of 800 cases borderline), trend/persistence, data-completeness confidence (honestly labelled a heuristic), individual-vs-systemic attribution with small-cell suppression, and the single escalation rule (`escalation.py`). |
 | **H** Near-miss detection | `backend/near_miss/` | ✅ Unit-level, independent of individual scores. One live finding on the current corpus (U016). |
 | **I** Recommendation engine | `backend/recommendation_engine/` | ✅ 8 pre-approved interventions in `intervention_library.json`. `action_mapper.py` maps (risk_level, top_signals, attribution) → ranked list. Pre-computed into `cases.json`, returned by `/api/officer/case/{id}`, rendered on the case detail screen. 618 of 800 cases carry recommendations. |
@@ -76,7 +76,7 @@ importable.
 | Support Vector Regression (RBF kernel) | 4.80 | 6.19 | 0.794 | 0.808 | 0.733 |
 | Random Forest Regressor | 5.02 | 6.27 | 0.788 | 0.782 | 0.586 |
 
-**Deployed model** (fitted on 512 people, calibrated on 128, measured on the 160 test people): MAE 4.55, R² 0.820; calibrated interval ±9.9 points at 90% target coverage, empirical coverage 91.5%.
+**Deployed model** (fitted on 512 people, calibrated on 128, measured on the 160 test people): MAE 4.55, R² 0.820; calibrated interval ±9.9 points at 90% target coverage, empirical coverage 91.5%. Every figure in this section is measured against the synthetic label — see `docs/model_comparison_report.md` §5 for what that does and does not establish.
 
 Full results in `ml/evaluation/model_comparison_results.json`.
 
@@ -90,19 +90,11 @@ labels from validated welfare assessments, which this build does not have and
 could not have.
 
 What it does show is that the pipeline carries information end to end, and the
-size of the gap is itself informative. Decomposing the label's variance:
-
-| Component | Share of label variance |
-| --- | --- |
-| Injected noise (σ = 4.5 points) | 10.6% |
-| `exposure_propensity` — a latent driver, deliberately not a feature | 1.0% |
-| **R² ceiling for any model given what it can see** | **≈ 0.883** |
-| Achieved | 0.821 |
-
-The remaining 0.062 is information the behavioral-signal layer gives up on
-purpose: saturating transforms, weighted blends, and monthly-grain duty
-pro-rated into week-scale windows. The model does not trivially invert the
-generator, because the signal layer is lossy in exchange for explainability.
+size of the gap is itself informative. The variance decomposition — how much of
+the label is injected noise, where the ceiling for any model sits, and why the
+signal layer deliberately gives up the rest — is maintained in **one place**:
+`docs/model_comparison_report.md` §5. It used to be restated here as well, and
+two copies of a number is how the two drift apart; this file links instead.
 
 `family_separation_signal` moved R² from 0.729 to about 0.81 on its own. That is the
 size of the hole it was filling. (The exact figure moved again when the split was

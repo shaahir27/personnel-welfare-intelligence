@@ -183,7 +183,7 @@ def load_ground_truth_labels(raw_dir: Path | None = None) -> pd.DataFrame:
 
     Returns:
         DataFrame with ``personnel_id``, ``snapshot_date``,
-        ``welfare_risk_score``.
+        ``synthetic_welfare_risk_score``.
 
     Raises:
         ValueError: If the label table fails validation.

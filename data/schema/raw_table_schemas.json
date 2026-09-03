@@ -643,7 +643,7 @@
         "allowed_values": null
       },
       {
-        "name": "welfare_risk_score",
+        "name": "synthetic_welfare_risk_score",
         "kind": "float",
         "required": true,
         "nullable": false,

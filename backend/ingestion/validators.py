@@ -270,7 +270,7 @@ GROUND_TRUTH_LABELS_SCHEMA = TableSchema(
     columns=(
         _S("personnel_id", "string"),
         _S("snapshot_date", "date"),
-        _S("welfare_risk_score", "float", non_negative=True),
+        _S("synthetic_welfare_risk_score", "float", non_negative=True),
     ),
 )
 

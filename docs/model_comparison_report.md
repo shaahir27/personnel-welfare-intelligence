@@ -106,9 +106,19 @@ and the size of the shortfall is itself the interesting number:
 | Component of the label's variance | Share |
 |---|---|
 | Injected noise (σ = 4.5 points) | 10.6% |
-| `exposure_propensity`, a latent driver deliberately excluded from the features | 1.0% |
+| `exposure_propensity`, a latent driver with no HR feature of its own | 1.0% |
 | **Ceiling for any model given what it can see** | **≈ 0.883** |
 | Achieved | 0.821 |
+
+`exposure_propensity` is often described as "excluded from the features". That
+is not quite true and the difference matters. No *HR* feature encodes it, but
+the generator also derives each voice sample's `latent_strain` from it
+(`generate_synthetic_data.py`), so for the 20 people with audio it reaches the
+model through `voice_stress_signal`. The share above is therefore an upper
+bound on what is genuinely unreachable, and — more importantly — any statement
+that the voice channel *adds* predictive value on this corpus is circular in
+exactly the way the HR side is. Breaking that circle is what the separate
+voice-lab exists to do; it cannot be broken with synthetic audio.
 
 The model sits 0.062 below the ceiling rather than on it. That gap is
 information the behavioral-signal layer gives up on purpose — saturating

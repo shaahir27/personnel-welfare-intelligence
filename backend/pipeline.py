@@ -144,4 +144,4 @@ def load_labels(output: PipelineOutput, raw_dir: Path | None = None) -> pd.DataF
     labels["pseudonym_id"] = [
         output.vault.pseudonym_for(str(pid)) for pid in labels["personnel_id"]
     ]
-    return labels[["pseudonym_id", "snapshot_date", settings.MODEL_TARGET_NAME]]
+    return labels[["pseudonym_id", "snapshot_date", settings.TRAINING_LABEL_NAME]]

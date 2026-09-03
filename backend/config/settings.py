@@ -584,7 +584,37 @@ TOP_CONTRIBUTING_FACTORS: Final[int] = 3
 # ---------------------------------------------------------------------------
 TRAIN_TEST_SPLIT_RATIO: Final[float] = 0.20
 CV_FOLDS: Final[int] = 5
+# The name of the quantity the model PREDICTS. Also listed in
+# COMMANDER_FORBIDDEN_FIELDS and asserted there by tests/test_rbac_api.py, so
+# it must not be renamed casually: assert_commander_safe() matches on this
+# exact string, and every payload already written to data/processed/ uses it.
 MODEL_TARGET_NAME: Final[str] = "welfare_risk_score"
+
+# The name of the column the model is TRAINED ON. Deliberately a different
+# name from the prediction above, because on this corpus they are different
+# things: the label is the output of latent_welfare_risk() in
+# scripts/generate_synthetic_data.py, not an observation of anybody's welfare.
+#
+# The name carries the caveat so that the caveat cannot be separated from the
+# number. Anyone reading a metrics payload, a comparison JSON or a training
+# log sees what the model was fitted against without having to find the
+# paragraph that explains it. When a real label arrives -- a validated
+# instrument score, or a forward outcome flag -- this constant changes to name
+# it, and that rename is the signal that the claim has changed.
+TRAINING_LABEL_NAME: Final[str] = "synthetic_welfare_risk_score"
+
+# One sentence, one place. Every serialised metrics payload carries this, and
+# model_registry.save() refuses to write a version without it. Restating it in
+# prose somewhere else is how the two copies drift apart; docs point at
+# docs/model_comparison_report.md section 5 instead.
+LABEL_PROVENANCE: Final[str] = (
+    "Metrics are measured against the synthetic label "
+    f"'{TRAINING_LABEL_NAME}', produced by latent_welfare_risk() in "
+    "scripts/generate_synthetic_data.py. They quantify how closely the model "
+    "reproduces that generator formula, not predictive validity against real "
+    "welfare outcomes, which would require field labels this build does not "
+    "have. See docs/model_comparison_report.md section 5."
+)
 
 # Candidate algorithms trained and compared on an identical split. The final
 # selection is made in ml/evaluation/metrics_report.py and justified in

@@ -16,15 +16,12 @@ That is stated explicitly in settings.py (ASSUMPTION comment on JWT_SECRET_KEY).
 
 Integration with rbac.py
 ------------------------
-``rbac.principal_from_headers()`` currently reads the role directly from the
-``X-Pwiews-Role`` header (the deferred-auth gap documented throughout). The
-comment on that function (line 96-98 of rbac.py) says:
-
-    "when JWT verification is added, only this function changes"
-
-This module provides ``principal_from_authorization_header()`` as the
-drop-in replacement. When DEBUG is False (i.e. production), the plain-header
-path is disabled and only verified tokens are accepted.
+``rbac.principal_from_headers()`` tries the ``Authorization: Bearer`` header
+first and calls ``principal_from_authorization_header()`` below to verify it.
+The plain ``X-Pwiews-Role`` header is only consulted when
+``DEBUG_ALLOW_HEADER_AUTH`` is set, which it is not by default. Tokens are
+issued by ``POST /api/auth/login`` (``backend/api/routes/auth.py``) against the
+credential store in ``backend/auth/credentials.py``.
 """
 
 from __future__ import annotations
@@ -53,12 +50,19 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Debug / demo mode
 # ---------------------------------------------------------------------------
-# When True the plain X-Pwiews-Role header is still accepted alongside tokens.
-# This allows the demo to work without a login step. Must be False in any
-# network-exposed deployment.
+# When True the plain X-Pwiews-Role header is accepted alongside tokens, which
+# means any caller can claim any role by typing it. That is only ever
+# acceptable while poking at the API by hand on a laptop.
+#
+# It defaults to OFF. It used to default to ON, so that the frontends could
+# work without a login route -- but the frontends now log in
+# (POST /api/auth/login), so the reason is gone and the default that leaves the
+# system open is the wrong one to ship. Set PWIEWS_DEBUG_AUTH=1 to get the
+# header path back for debugging.
+#
 # ASSUMPTION: controlled by environment variable. Not read from settings so
 # that it cannot accidentally be committed as True.
-DEBUG_ALLOW_HEADER_AUTH: bool = os.environ.get("PWIEWS_DEBUG_AUTH", "1") == "1"
+DEBUG_ALLOW_HEADER_AUTH: bool = os.environ.get("PWIEWS_DEBUG_AUTH", "0") == "1"
 
 
 # ---------------------------------------------------------------------------

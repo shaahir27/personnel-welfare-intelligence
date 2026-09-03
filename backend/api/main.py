@@ -28,20 +28,20 @@ handler gains a decorator and a Pydantic response model, and the
 ``principal_from_headers`` call becomes a ``Depends``. Nothing about the
 authorisation model or the route boundaries would change.
 
-SCOPE OF THIS BUILD
--------------------
-Authentication is implemented via signed JWTs (see backend/auth/jwt_handler.py).
-The acting role and subject arrive in a verified `Authorization: Bearer <token>`
-header -- `backend.auth.rbac.principal_from_headers()` checks for that header
-first and rejects a missing/invalid one. The one remaining gap: there is no
-`POST /api/auth/login` route to issue tokens against stored credentials,
-because this build has no credential store to validate against (see STATUS.md).
-The plain `X-Pwiews-Role` / `X-Pwiews-Subject` header path still exists as a
-fallback for when no Bearer token is sent, gated by `PWIEWS_DEBUG_AUTH`
-(env var `backend/auth/jwt_handler.py:DEBUG_ALLOW_HEADER_AUTH`, which
-**defaults to enabled** so the demo frontends work without a login route).
-Set `PWIEWS_DEBUG_AUTH=0` before exposing this outside a trusted network --
-that is the one flag standing between this build and header-spoofable auth.
+AUTHENTICATION
+--------------
+Signed HS256 JWTs, end to end. `POST /api/auth/login` checks a username and
+password against PBKDF2 hashes in `backend/auth/demo_accounts.json` and issues
+a token; `rbac.principal_from_headers()` verifies the `Authorization: Bearer`
+header on every role-scoped request; both frontends log in at boot and send the
+token. The demo passwords are published in README.md, because the corpus is
+synthetic and a reviewer has to be able to sign in.
+
+The plain `X-Pwiews-Role` / `X-Pwiews-Subject` header path still exists for
+local debugging, gated by `PWIEWS_DEBUG_AUTH` (env var, read in
+`backend/auth/jwt_handler.py:DEBUG_ALLOW_HEADER_AUTH`). It **defaults to
+disabled**: setting it to 1 makes any caller able to claim any role, so it is
+opt-in and never the state a checkout starts in.
 
 The authorisation model is what carries the privacy guarantee on top of that:
 role-scoped routes, personnel restricted to their own record, officer
@@ -69,7 +69,7 @@ from starlette.routing import Mount, Route  # noqa: E402
 from starlette.staticfiles import StaticFiles  # noqa: E402
 
 from backend.api import store as store_module  # noqa: E402
-from backend.api.routes import commander, officer, personal  # noqa: E402
+from backend.api.routes import auth, commander, officer, personal  # noqa: E402
 from backend.auth import rbac  # noqa: E402
 from backend.config import settings  # noqa: E402
 
@@ -97,9 +97,10 @@ async def meta(request: Request) -> JSONResponse:
             "signal_labels": current.meta.get("signal_labels"),
             "roles": list(settings.ROLES),
             "auth_note": (
-                "This build identifies the acting role from a request header. "
-                "Token-based authentication is not implemented; do not expose "
-                "this API outside a trusted network."
+                "Every role-scoped route requires a signed HS256 token from "
+                "POST /api/auth/login. The plain X-Pwiews-Role header is "
+                "accepted only when PWIEWS_DEBUG_AUTH=1, which is not the "
+                "default."
             ),
         }
     )
@@ -198,6 +199,7 @@ def build_app(processed_dir: Path | None = None) -> Starlette:
         Route("/api/meta", meta, methods=["GET"]),
         Route("/api/health", health, methods=["GET"]),
         Route("/api/demo/identities", demo_identities, methods=["GET"]),
+        *auth.routes(),
         *personal.routes(),
         *officer.routes(),
         *commander.routes(),

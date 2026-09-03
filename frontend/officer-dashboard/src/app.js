@@ -8,6 +8,7 @@
  * both sides of the wire deliberately.
  */
 import { api } from "../../shared/api.js";
+import { signInForDashboard } from "../../shared/demo-login.js";
 import { clear, el, showError } from "../../shared/ui.js";
 import { renderWelfareQueue } from "./screens/WelfareQueue.js";
 import { renderCaseDetail } from "./screens/CaseDetail.js";
@@ -60,9 +61,10 @@ async function render() {
   }
 }
 
-/** Boot. */
+/** Boot: sign in for both dashboard roles, then render. */
 async function main() {
   try {
+    await signInForDashboard(api);
     state.meta = await api.meta();
     renderNav();
     await render();

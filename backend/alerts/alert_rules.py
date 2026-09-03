@@ -268,10 +268,21 @@ def generate_alert_batch(
         near_misses: Near-miss findings from the pipeline.
 
     Returns:
-        Dict with keys ``by_recipient`` (alerts grouped by role) and
-        ``by_pseudonym`` (individual alerts indexed by pseudonym_id for
-        fast lookup at the personal API route). Commander alerts appear
-        only under ``by_recipient``.
+        Dict with keys ``by_recipient`` (alerts grouped by role),
+        ``by_pseudonym`` (alerts *addressed to the individual*, indexed by
+        pseudonym_id for fast lookup at the personal API route) and
+        ``officer_by_pseudonym`` (officer alerts about a person, indexed the
+        same way for the officer dashboard). Commander alerts appear only
+        under ``by_recipient``.
+
+    Note:
+        ``by_pseudonym`` is filtered by recipient, not merely by "has a
+        pseudonym_id". Officer alerts carry the pseudonym of the person they
+        concern, so indexing on presence alone put them in the feed the
+        individual reads -- which would have told a person that their welfare
+        officer had been notified about them. The graduation principle at the
+        top of this module says the opposite: the officer is told, and the
+        individual is not told that the officer was told.
 
     Note:
         Deduplication is handled via ``alert_id``. If two rules produce the
@@ -294,16 +305,24 @@ def generate_alert_batch(
         settings.ROLE_COMMANDER: [],
     }
     by_pseudonym: Dict[str, List[Dict]] = {}
+    officer_by_pseudonym: Dict[str, List[Dict]] = {}
 
     for alert in all_alerts:
         role = alert.recipient_role
         if role in by_recipient:
             by_recipient[role].append(alert.to_dict())
-        if alert.pseudonym_id:
+        if not alert.pseudonym_id:
+            continue
+        if role == settings.ROLE_PERSONNEL:
             by_pseudonym.setdefault(alert.pseudonym_id, []).append(alert.to_dict())
+        elif role == settings.ROLE_WELFARE_OFFICER:
+            officer_by_pseudonym.setdefault(alert.pseudonym_id, []).append(
+                alert.to_dict()
+            )
 
     return {
         "by_recipient": by_recipient,
         "by_pseudonym": by_pseudonym,
+        "officer_by_pseudonym": officer_by_pseudonym,
         "total_count": len(all_alerts),
     }

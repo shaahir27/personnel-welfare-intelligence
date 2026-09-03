@@ -182,6 +182,36 @@ class TestGenerateAlertBatch(unittest.TestCase):
         )
         self.assertNotIn("PSN001", batch["by_pseudonym"])
 
+    def test_by_pseudonym_carries_only_the_persons_own_notifications(self) -> None:
+        """Regression: the individual's feed must not contain officer alerts.
+
+        ``by_pseudonym`` is what ``GET /api/personal/{id}/notifications``
+        returns. It used to be built from "does this alert carry a
+        pseudonym_id", and officer alerts carry the pseudonym of the person
+        they are about -- so a High-risk person opening their own app was told
+        that their welfare officer had been notified about them. The module's
+        graduation principle says the opposite.
+        """
+        batch = generate_alert_batch(
+            cases=[_case("PSN001", "High", confidence="High")],
+            near_misses=[],
+        )
+        own = batch["by_pseudonym"].get("PSN001", [])
+        self.assertTrue(own, "expected the person to have their own notification")
+        for alert in own:
+            self.assertEqual(alert["recipient_role"], settings.ROLE_PERSONNEL)
+
+    def test_officer_alerts_are_still_reachable_by_pseudonym(self) -> None:
+        """Filtering the personal feed must not lose the officer's own view."""
+        batch = generate_alert_batch(
+            cases=[_case("PSN001", "High", confidence="High")],
+            near_misses=[],
+        )
+        officer_alerts = batch["officer_by_pseudonym"].get("PSN001", [])
+        self.assertTrue(officer_alerts)
+        for alert in officer_alerts:
+            self.assertEqual(alert["recipient_role"], settings.ROLE_WELFARE_OFFICER)
+
     def test_total_count_is_accurate(self) -> None:
         batch = generate_alert_batch(
             cases=[_case("PSN001", "High", confidence="Medium")],

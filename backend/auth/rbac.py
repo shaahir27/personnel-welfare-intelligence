@@ -1,18 +1,15 @@
 """Role checks and the commander no-individual-data guard.
 
-Scope note for this build:
-    Full authentication (JWT issuance, credential storage, session handling) is
-    NOT implemented in this pass -- it was explicitly deferred. What *is*
-    implemented is the part that carries the privacy guarantee: role
-    identification at the API boundary, per-role scope, and a hard structural
-    guard that a commander response can never contain individual-identifiable
-    data.
+Authentication and authorisation are different jobs:
+    An authentication bug lets the wrong person in as a commander. An
+    authorisation bug lets a commander see individuals. The second is the one
+    that would break this system's promise to the people it monitors, so it
+    was built first and is enforced redundantly.
 
-    Deferring authentication is a real gap and is stated as one. It is a
-    different gap from the one that matters most here: an authentication bug
-    lets the wrong person in as a commander; an authorisation bug lets a
-    commander see individuals. The second is the one that would break the
-    system's promise to the people it monitors, so it is the one built first.
+    Authentication now exists too: ``POST /api/auth/login`` issues a signed
+    HS256 token against the credential store in ``backend/auth/credentials.py``
+    and ``principal_from_headers`` below verifies it. The plain role header is
+    accepted only under ``PWIEWS_DEBUG_AUTH=1``, which is not the default.
 
 The guarantee this module enforces
 ----------------------------------
@@ -92,10 +89,9 @@ def principal_from_headers(headers: Any) -> Principal:
         AuthorisationError: If the role header is missing or not a known role.
 
     Note:
-        In this build the role is asserted by a header rather than proven by a
-        signed token. That is the deferred authentication gap, and it is why
-        this function is the single place the role enters the system -- when
-        JWT verification is added, only this function changes.
+        This is the single place a role enters the system. A verified Bearer
+        token is the only way in unless ``PWIEWS_DEBUG_AUTH=1`` re-enables the
+        plain header for local debugging.
     """
     # Try Bearer-token authentication first.
     authorization = str(headers.get("Authorization", "") or "").strip()

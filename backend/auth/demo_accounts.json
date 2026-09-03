@@ -1,0 +1,26 @@
+{
+  "_about": "Demo accounts for POST /api/auth/login. Passwords are PBKDF2-HMAC-SHA256, 200000 iterations, unique 16-byte salt per account. The plaintext passwords are published in README.md because this build guards a synthetic corpus and a judge needs to be able to sign in. Replace this file with a real directory service before any deployment; backend/auth/credentials.py is the only module that reads it.",
+  "accounts": {
+    "officer": {
+      "role": "welfare_officer",
+      "subject": "WO-DEMO-01",
+      "may_choose_subject": false,
+      "salt": "3071dbbcda247bd524731cc23aa73d24",
+      "password_hash": "eada4578f6da34135b8a5b0f72f4cd78b10eef1eaa8c260e2482518d9a261d0a"
+    },
+    "commander": {
+      "role": "commander",
+      "subject": "CMD-DEMO-01",
+      "may_choose_subject": false,
+      "salt": "8affb94da79434776edae3f36bf26829",
+      "password_hash": "a8a02b1bd2957d8a41b4d16525e38fb3ec2b372643aa95e19d36ba8b948a4839"
+    },
+    "personnel": {
+      "role": "personnel",
+      "subject": "",
+      "may_choose_subject": true,
+      "salt": "8b7d148c683b22f683975265488d668f",
+      "password_hash": "8128ebc4cd88e40c0fe20f0bf37fc85cf6aeb62fd82809621ab7b754d5efd6ae"
+    }
+  }
+}

@@ -23,6 +23,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from backend.api import checkin_store
 from backend.api.store import ProcessedStore
 from backend.auth import rbac
 from backend.config import settings
@@ -176,6 +177,55 @@ async def check_in_questions(request: Request) -> JSONResponse:
     )
 
 
+async def submit_check_in(request: Request) -> JSONResponse:
+    """POST /api/personal/{pseudonym_id}/check-in -- store your own answers.
+
+    Body:
+        ``{"answers": [{"question_id": str, "value": int} | {"question_id":
+        str, "text": str}, ...]}``
+
+    Returns the stored record and how many submissions this person now has.
+
+    Answers are written to an append-only store (``backend/api/checkin_store``)
+    and are read back only by the person who wrote them. Nothing here feeds the
+    scoring path: the eight behavioral signals come from HR records alone, so
+    answering, or not answering, cannot move anybody's risk score. That is what
+    makes the "entirely optional" line on the check-in screen true rather than
+    reassuring.
+    """
+    principal = rbac.principal_from_headers(request.headers)
+    rbac.require_role(principal, settings.ROLE_PERSONNEL)
+    pseudonym_id = request.path_params["pseudonym_id"]
+    rbac.require_self(principal, pseudonym_id)
+
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        return JSONResponse({"detail": "request body must be JSON"}, status_code=400)
+
+    try:
+        record = checkin_store.record_submission(
+            pseudonym_id, body.get("answers", [])
+        )
+    except checkin_store.InvalidSubmission as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    return JSONResponse(
+        {
+            "pseudonym_id": pseudonym_id,
+            "stored": record,
+            "submission_count": len(checkin_store.submissions_for(pseudonym_id)),
+            "note": (
+                "Your answers are saved against your own record. They are not "
+                "shown to your commander, a welfare officer sees them only if "
+                "you ask for support, and they do not affect your indicator "
+                "score."
+            ),
+        },
+        status_code=201,
+    )
+
+
 async def privacy(request: Request) -> JSONResponse:
     """GET /api/personal/{pseudonym_id}/privacy -- what the system holds and why.
 
@@ -302,8 +352,17 @@ async def notifications(request: Request) -> JSONResponse:
 
     Personnel may only read their own notifications. Officers may also call
     this route (scoped to their queue); commanders may not.
+
+    Note:
+        ``require_role`` is not optional here. ``require_self`` alone does not
+        close this route to a commander -- it only constrains a *personnel*
+        principal to their own pseudonym, and returns silently for every other
+        role. Every other handler in this module pairs the two checks; this one
+        did not, which left an individual's notifications readable at commander
+        level.
     """
     principal = rbac.principal_from_headers(request.headers)
+    rbac.require_role(principal, settings.ROLE_PERSONNEL, settings.ROLE_WELFARE_OFFICER)
     pseudonym_id = request.path_params["pseudonym_id"]
     rbac.require_self(principal, pseudonym_id)
 
@@ -334,6 +393,7 @@ def routes() -> List[Route]:
         Route("/api/personal/{pseudonym_id}/summary", summary, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/history", history, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/check-in", check_in_questions, methods=["GET"]),
+        Route("/api/personal/{pseudonym_id}/check-in", submit_check_in, methods=["POST"]),
         Route("/api/personal/{pseudonym_id}/privacy", privacy, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/notifications", notifications, methods=["GET"]),
     ]

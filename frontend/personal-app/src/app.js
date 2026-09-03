@@ -4,14 +4,18 @@
  * One job: pick the acting identity, hold the four screens, and render one of
  * them.
  *
- * On the identity selector: this build has no authentication, so the app needs
- * *some* way to know whose record to show. It offers a short list of demo
- * pseudonyms from `/api/demo/identities`. In a deployment this is replaced by
- * the signed-in user, and the selector disappears — the screens themselves take
- * a pseudonym and do not care where it came from.
+ * On the identity selector: this build has no real sign-ups, so the app needs
+ * *some* way to choose which of the 800 synthetic people to look at. It offers a
+ * short list from `/api/demo/identities` and signs in as whoever is picked. The
+ * token that comes back is scoped to that one pseudonym and the server enforces
+ * that scope, so picking somebody is signing in as them — not a way to read
+ * somebody else's record while signed in as yourself. In a deployment the
+ * selector disappears and the person signs in as themselves; the screens
+ * themselves take a pseudonym and do not care where it came from.
  */
 
 import { api } from "../../shared/api.js";
+import { signInAsPersonnel } from "../../shared/demo-login.js";
 import { clear, el, showError } from "../../shared/ui.js";
 import { renderWellbeingHome } from "./screens/WellbeingHome.js";
 import { renderTrendView } from "./screens/TrendView.js";
@@ -75,9 +79,19 @@ async function setUpIdentities() {
     );
   }
   state.pseudonymId = identities.length ? identities[0].pseudonym_id : null;
-  select.addEventListener("change", () => {
+  // Switching identity means signing in again: the token is scoped to one
+  // pseudonym, and the server checks that scope on every personal route. That
+  // is the whole point — the selector picks who to sign in as, it does not let
+  // one signed-in person read another's record.
+  select.addEventListener("change", async () => {
     state.pseudonymId = select.value;
-    renderScreen();
+    const container = document.getElementById("screen");
+    try {
+      await signInAsPersonnel(api, state.pseudonymId);
+      await renderScreen();
+    } catch (error) {
+      showError(container, error);
+    }
   });
 }
 
@@ -87,6 +101,7 @@ async function main() {
   try {
     state.meta = await api.meta();
     await setUpIdentities();
+    if (state.pseudonymId) await signInAsPersonnel(api, state.pseudonymId);
     renderNav();
     await renderScreen();
   } catch (error) {

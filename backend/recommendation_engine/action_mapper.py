@@ -47,6 +47,30 @@ def _load_library() -> List[Dict]:
 _LIBRARY: List[Dict] = _load_library()
 
 
+def library_ids() -> frozenset:
+    """Return every intervention id the library contains.
+
+    Returns:
+        The ids, as a frozenset. Used by ``backend/db/intervention_log.py`` to
+        refuse an action recorded against an intervention that does not exist,
+        without that module having to import this one -- the dependency runs
+        the other way, from the route that has both in hand.
+    """
+    return frozenset(entry["id"] for entry in _LIBRARY)
+
+
+def library_entry(intervention_id: str) -> Dict | None:
+    """Return one intervention by id.
+
+    Args:
+        intervention_id: The id to look up.
+
+    Returns:
+        The library entry, or None when the id is unknown.
+    """
+    return next((e for e in _LIBRARY if e["id"] == intervention_id), None)
+
+
 @dataclass(frozen=True)
 class Recommendation:
     """One recommended welfare intervention.

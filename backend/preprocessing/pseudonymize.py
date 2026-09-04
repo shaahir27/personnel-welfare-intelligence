@@ -46,10 +46,11 @@ import hmac
 import os
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence
+from typing import Dict, Iterable, Iterator, List, Mapping, Sequence
 
 import pandas as pd
 
@@ -136,9 +137,38 @@ class PseudonymVault:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        """Open the vault for one unit of work, commit it, and close the handle.
+
+        Yields:
+            A connection, inside its own transaction.
+
+        Why this exists rather than ``with self._connect() as conn``:
+            ``sqlite3.Connection`` is its own context manager, but it only
+            commits or rolls back the transaction -- it does **not** close the
+            connection. Every call therefore left a file handle open on the
+            identity map. On Linux that is invisible, because an open file can
+            still be unlinked; on Windows it cannot, so a caller working
+            against a temporary vault fails during cleanup rather than on any
+            assertion, and a suite is red on one platform and green on the
+            other for identical code. The access log hit exactly this
+            (``backend/db/access_log.py``); this is the same fix, applied
+            before it costs anybody a debugging session.
+
+            Every access here is one short unit of work, so closing per call
+            costs nothing measurable and removes the platform difference.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _ensure_schema(self) -> None:
         """Create the identity-map tables if they do not exist."""
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS vault_meta (
@@ -175,7 +205,7 @@ class PseudonymVault:
             other. A production deployment would source this from a key
             management service instead; the code path is identical.
         """
-        with self._connect() as conn:
+        with self._session() as conn:
             row = conn.execute(
                 "SELECT value FROM vault_meta WHERE key = 'salt'"
             ).fetchone()
@@ -222,7 +252,7 @@ class PseudonymVault:
         """
         mapping = {str(pid): self.pseudonym_for(pid) for pid in personnel_ids}
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.executemany(
                 "INSERT OR IGNORE INTO identity_map "
                 "(pseudonym_id, personnel_id, created_at) VALUES (?, ?, ?)",
@@ -269,7 +299,7 @@ class PseudonymVault:
                 raise ReidentificationDenied(
                     "a recorded purpose is required to re-identify personnel"
                 )
-            with self._connect() as conn:
+            with self._session() as conn:
                 row = conn.execute(
                     "SELECT personnel_id FROM identity_map WHERE pseudonym_id = ?",
                     (pseudonym_id,),
@@ -296,7 +326,7 @@ class PseudonymVault:
         Args:
             record: The attempt to record.
         """
-        with self._connect() as conn:
+        with self._session() as conn:
             conn.execute(
                 "INSERT INTO reidentification_audit "
                 "(pseudonym_id, requester_id, requester_role, purpose, requested_at, granted) "
@@ -311,6 +341,36 @@ class PseudonymVault:
                 ),
             )
 
+    def audit_summary(self, pseudonym_id: str) -> Dict[str, object]:
+        """Summarise re-identification attempts against one person's pseudonym.
+
+        Args:
+            pseudonym_id: Whose pseudonym.
+
+        Returns:
+            ``attempts``, ``granted``, ``refused`` and the first/last granted
+            timestamps. Counts and dates only, with no requester identity --
+            shown to the individual in the Privacy Centre so they can see that
+            the path back to their name exists, is narrow, and is recorded.
+            Who asked is oversight material, not something to hand either party
+            as a way to police the other.
+        """
+        with self._session() as conn:
+            rows = conn.execute(
+                "SELECT granted, requested_at FROM reidentification_audit "
+                "WHERE pseudonym_id = ? ORDER BY id",
+                (str(pseudonym_id),),
+            ).fetchall()
+
+        granted = [r["requested_at"] for r in rows if r["granted"]]
+        return {
+            "attempts": len(rows),
+            "granted": len(granted),
+            "refused": len(rows) - len(granted),
+            "first_resolved_at": granted[0] if granted else None,
+            "last_resolved_at": granted[-1] if granted else None,
+        }
+
     def audit_trail(self, limit: int = 100) -> List[Dict[str, object]]:
         """Return the most recent re-identification attempts, newest first.
 
@@ -321,7 +381,7 @@ class PseudonymVault:
             List of audit rows as plain dictionaries. Surfaced in the Privacy
             Centre so a person can see that the trail exists and is kept.
         """
-        with self._connect() as conn:
+        with self._session() as conn:
             rows = conn.execute(
                 "SELECT pseudonym_id, requester_id, requester_role, purpose, "
                 "requested_at, granted FROM reidentification_audit "
@@ -332,7 +392,7 @@ class PseudonymVault:
 
     def count(self) -> int:
         """Return how many people are registered in the identity map."""
-        with self._connect() as conn:
+        with self._session() as conn:
             row = conn.execute("SELECT COUNT(*) AS n FROM identity_map").fetchone()
         return int(row["n"])
 

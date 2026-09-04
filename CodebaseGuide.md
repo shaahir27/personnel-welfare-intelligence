@@ -22,6 +22,7 @@
    - [models/](#58-backendmodels)
    - [post_model_analytics/](#59-backendpost_model_analytics)
    - [near_miss/](#510-backendnear_miss)
+   - [medical/](#510a-backendmedical)
    - [api/](#511-backendapi)
    - [auth/ (rbac.py + jwt_handler.py)](#512-backendauth)
    - [recommendation_engine/](#513-backendrecommendation_engine)
@@ -42,6 +43,11 @@
 13. [Alert rules — the notification system](#13-alert-rules--the-notification-system)
 14. [Recommendation engine — the action engine](#14-recommendation-engine--the-action-engine)
 15. [Test suite — what each test file proves](#15-test-suite--what-each-test-file-proves)
+16. [The gray-area group — how a false-positive rate becomes measurable](#16-the-gray-area-group)
+17. [Counterfactuals, and why they are not the SHAP explanation](#17-counterfactuals)
+18. [Self-report consistency — the check nobody can weaponise](#18-self-report-consistency)
+19. [The medical domain — a second, stricter boundary](#19-the-medical-domain)
+20. [The officer queue: visibility versus capacity](#20-the-officer-queue)
 
 ---
 
@@ -81,7 +87,16 @@ personnel-welfare-intelligence/
 │   ├── raw/                     ← CSVs: personnel, duty_logs, leave, etc.
 │   ├── processed/               ← JSON outputs written by run_pipeline.py
 │   ├── schema/                  ← raw_table_schemas.json
+│   ├── responses/               ← check-in answers (append-only JSONL)
+│   ├── access_log.sqlite3       ← who opened whose record, granted or refused
+│   ├── intervention_log.sqlite3 ← which welfare action was taken
+│   ├── revoked_tokens.sqlite3   ← ended sessions (no subject stored)
+│   ├── medical_records.sqlite3  ← booking store — never joined to anything else
 │   └── identity_map.sqlite3     ← SEPARATE DB holding real identity mapping
+
+           Five SQLite files, deliberately five files. Each sits at a different
+           trust boundary; putting two together would mean a compromise of one
+           exposed the other. The API process never opens identity_map.
 │
 ├── backend/
 │   ├── pipeline.py              ← MASTER ORCHESTRATOR (ingestion → signals)
@@ -93,16 +108,23 @@ personnel-welfare-intelligence/
 │   ├── voice_pipeline/          ← Acoustic features from audio
 │   ├── models/                  ← 8 candidates, training, selection, SHAP
 │   ├── post_model_analytics/    ← Risk bands, trends, confidence, attribution
+│   │   ├── counterfactual.py    ← what would CHANGE a score (vs SHAP: what built it)
+│   │   └── self_report_consistency.py ← answers vs the duty record
 │   ├── near_miss/               ← Unit-level near-miss detection
+│   ├── medical/                 ← Doctor booking: own store, own roles, own namespace
+│   │   ├── identity.py          ← keeps the two identifier namespaces disjoint
+│   │   └── store.py             ← roster, slots, appointments, prescriptions
+│   ├── db/                      ← access_log.py, intervention_log.py
 │   ├── recommendation_engine/   ← Rule-based action mapper (NEW)
-│   │   ├── intervention_library.json  ← 8 pre-approved interventions
+│   │   ├── intervention_library.json  ← 10 pre-approved interventions
 │   │   └── action_mapper.py     ← maps (risk, signals, attribution) → actions
 │   ├── alerts/                  ← Graduated alert generator (NEW)
 │   │   └── alert_rules.py       ← 4 rules, 3 roles, pre-computed per pipeline run
 │   ├── api/                     ← Starlette app + route modules
 │   └── auth/                    ← RBAC + JWT authentication
 │       ├── rbac.py              ← role gates, commander payload guard
-│       └── jwt_handler.py       ← HS256 token creation and verification (NEW)
+│       ├── jwt_handler.py       ← HS256 token creation and verification
+│       └── token_revocation.py  ← the denylist that makes sign-out real
 │
 ├── ml/
 │   └── evaluation/              ← Metric definitions, comparison results JSON
@@ -123,10 +145,30 @@ personnel-welfare-intelligence/
 │   ├── generate_synthetic_data.py  ← Creates 800 people of fake data
 │   ├── generate_voice_audio.py     ← Creates synthetic WAV files
 │   ├── train_models.py             ← Trains 8 models, picks best, saves
-│   └── run_pipeline.py             ← Scores everyone, writes processed/ JSONs
+│   ├── run_pipeline.py             ← Scores everyone, writes processed/ JSONs
+│   ├── seed_medical_roster.py      ← Doctors + slots. Reads NOTHING from analytics
+│   └── reidentify.py               ← The audited path back to a person. CLI only
 │
-└── tests/                       ← Test suite (NEW)
+├── validation/                  ← External validation — outside backend/ on purpose
+│   ├── build_rating_profiles.py    ← Case profiles for humans to rate, no score shown
+│   └── run_human_rating_validation.py ← Inter-rater agreement, then model-vs-consensus
+│
+└── tests/                       ← 385 tests
     ├── test_rbac_api.py          ← ⭐ Commander data-leak proof (most critical)
+    ├── test_api_routes.py        ← ⭐ Routes over HTTP — where the real bugs lived
+    ├── test_medical.py           ← Domain isolation, enforced at the import graph
+    ├── test_benign_profiles.py   ← The gray-area column never reaches the model
+    ├── test_signal_coverage.py   ← Every signal has a question AND an intervention
+    ├── test_self_report_consistency.py ← The officer view carries no numbers
+    ├── test_counterfactual.py    ← Sweep bookkeeping, and the two proximity flags
+    ├── test_token_revocation.py  ← Sign-out is refused on the path routes take
+    ├── test_intervention_log.py  ← Statuses name the process, never the person
+    ├── test_escalation.py        ← The one visibility rule
+    ├── test_conformal.py         ← Calibration arithmetic and coverage
+    ├── test_access_log.py        ← Contents, scoping, retention
+    ├── test_request_parsing.py   ← Every write route's body validation
+    ├── test_checkin_store.py     ← Answers validated against the bank
+    ├── test_metric_provenance.py ← No metric travels without what it measures
     ├── test_jwt_auth.py          ← JWT creation, verification, expiry, tamper
     ├── test_alert_rules.py       ← Graduation rules, role scoping
     ├── test_recommendation_engine.py ← Determinism, attribution filter, confidence
@@ -965,7 +1007,7 @@ That default used to be 1, because the frontends had no way to obtain a token: `
 - Runs on the **response**, not the query — catches fields that sneak in through helper functions or dataclass attribute additions
 - This is the structural guarantee that commander responses cannot contain individual data
 
-**Forbidden fields for commander:** `personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`, `welfare_risk_score`, `risk_level`, `contributing_factors`, `voice_stress_signal`, `recommendations`, `case_id`
+**Forbidden fields for commander:** `personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`, `welfare_risk_score`, `risk_level`, `contributing_factors`, `voice_stress_signal`, `recommendations`, `case_id`, `family_separated`, `self_report_consistency`, `self_reported_strain`, `appointment_id`, `prescription_id`, `doctor_id` — see §12 for why the last six are on the list.
 
 #### `jwt_handler.py` (NEW)
 **Role:** Create and verify signed JWT tokens — the authentication layer.
@@ -1337,6 +1379,37 @@ Every field in every raw CSV and every field in the main processed output files 
 
 ---
 
+### 5.10a `backend/medical/`
+
+The one part of the codebase that is deliberately unreachable from everything
+else. Full argument in `backend/medical/README.md`; the file-level view:
+
+| File | What it holds |
+|---|---|
+| `identity.py` | Two regexes and three functions. `PSN[0-9a-f]{16}` is the welfare namespace, `P\d{5}` the medical one, and `require_service_identity()` refuses the first with a message that says why. |
+| `store.py` | Four tables — `doctors`, `availability_slots`, `appointments`, `prescriptions` — in `data/medical_records.sqlite3`. |
+
+**Why `identity.py` does not import `pseudonymize`.** It needs the pseudonym
+pattern, and the obvious thing would be to import `PSEUDONYM_PREFIX` from the
+module that produces them. It deliberately does not: importing it would give
+this package a reference to the vault's code, and the one thing the medical
+domain must not have is a path to the vault. The pattern is a literal here, with
+a comment saying so.
+
+**What the store enforces that the routes cannot.** The uniqueness constraint on
+`appointments.slot_id` and the conditional claim in `book()` are what make
+double-booking impossible under concurrency. A route-level "is this slot free?"
+check would look correct and lose the race between two people tapping the last
+slot at once.
+
+**What a test asserts about this directory.** `tests/test_medical.py` reads
+every `.py` file here and fails if any of them names `backend.models`,
+`backend.post_model_analytics`, `backend.api.store`, `PseudonymVault` or
+`IDENTITY_MAP_DB_PATH`. The isolation is a property of the import graph, not a
+convention people remember.
+
+---
+
 ## 6. Training flow — step by step
 
 ```
@@ -1522,12 +1595,63 @@ Browser (personal-app) with Authorization: Bearer <token>
 Browser (officer-dashboard) with Authorization: Bearer <token> (role: welfare_officer)
   → officer.queue(request)
   → rbac.require_role(principal, "welfare_officer")
-  → build_queue(store)
+  → build_queue(store)                       ← EVERY eligible case, uncapped
      └─ filters: escalation.is_officer_visible(case) → High OR (persistent Moderate AND Rising)
      └─ sorts by priority_score (risk + trend bonus - confidence penalty)
      └─ returns trimmed list (pseudonym, score, level, trend, confidence, attribution)
-  → JSONResponse (no raw voice, no unredacted personnel fields — just queue fields)
+  → handler applies settings.OFFICER_QUEUE_TARGET_SIZE  ← capacity, not visibility
+     └─ ?all=1 skips the cap entirely
+  → JSONResponse with visible_count AND total_eligible AND held_back_count
 ```
+
+The cap lives in the **handler**, not in `build_queue`, so the count of people
+the rule admits is always available to report honestly beside the count shown.
+See §20.
+
+### Counterfactual sweep: `GET /api/officer/case/{id}/counterfactual`
+
+```
+  → rbac.require_role(principal, "welfare_officer")
+  → escalation gate — refused reads are logged too
+  → access_log.record_access(..., action="counterfactual", outcome=...)
+  → medians = store.meta["signal_medians"]   ← computed once by the pipeline
+  → counterfactual.sweep(signals, current_score, scorer, medians)
+     └─ 9 × scorer.score_row(), one signal at a time held at the median
+     └─ ranked by reduction, entries below 0.5 points dropped
+  → JSONResponse with is_illustrative=True and the what-if disclaimer verbatim
+```
+
+### Recording a welfare action: `POST /api/officer/case/{id}/intervention`
+
+```
+  → rbac.require_role(principal, "welfare_officer")
+  → escalation gate (a hidden case cannot be written to either)
+  → request_parsing validates the body
+  → intervention_log.record_action(..., known_intervention_ids=action_mapper.library_ids())
+     └─ refuses an id the library does not contain, and a status outside the four
+  → access_log.record_access(..., action="record_intervention")
+  → 201 with the row and a per-case summary
+```
+
+### Booking a doctor: `POST /api/medical/appointments`
+
+```
+Browser with Authorization: Bearer <token> (role: personnel, subject "P00123")
+  → medical.book_appointment(request)
+  → rbac.require_role(principal, "personnel")
+  → identity.require_service_identity(principal.subject)
+     └─ a PSN… pseudonym is REFUSED here, with its own message
+  → share_context must be boolean true, or it is "no"
+  → store.book(...)
+     └─ SELECT the slot
+     └─ UPDATE … SET is_booked=1 WHERE slot_id=? AND is_booked=0   ← the claim
+     └─ if rowcount != 1 → SlotUnavailable, whole transaction rolls back
+     └─ INSERT the appointment, same transaction
+  → 201
+```
+
+Note what is **not** in that flow: any read of the processed store, any risk
+score, any priority ordering. The package cannot reach them.
 
 ### What-if simulation: `POST /api/officer/what-if`
 
@@ -1650,25 +1774,50 @@ voice_stress_signal.py
 
 ### What each role can see
 
-| Resource / Feature | Personnel | Welfare Officer | Commander |
-|---|---|---|---|
-| Own score, signals, factors | ✅ | ✅ | ❌ |
-| Own history & trend | ✅ | ❌ | ❌ |
-| Own privacy centre & audit | ✅ | ❌ | ❌ |
-| Personal notifications (`/notifications`) | ✅ | ❌ | ❌ |
-| Other people's individual data | ❌ | ❌ (only escalated cases) | ❌ |
-| Officer queue (High + persistent rising Moderate) | ❌ | ✅ | ❌ |
-| Full case detail & recommendations | ❌ | ✅ | ❌ |
-| What-if simulation | ❌ | ✅ | ❌ |
-| Unit aggregates | ❌ | ❌ | ✅ |
-| Near-miss findings & pressure | ❌ | ❌ | ✅ |
+There are **five** roles in **two non-overlapping groups**. The welfare group
+is `personnel`, `welfare_officer`, `commander`; the medical group is
+`personnel`, `medical_officer`, `establishment_admin`. They intersect in exactly
+one place — the individual, who is the one party entitled to their own data on
+both sides of the boundary. `settings.WELFARE_ROLES` and
+`settings.MEDICAL_ROLES` name the two, and a test asserts the intersection.
+
+| Resource / Feature | Personnel | Welfare Officer | Commander | Medical Officer | Estab. Admin |
+|---|---|---|---|---|---|
+| Own score, signals, factors | ✅ | ✅ (escalated only) | ❌ | ❌ | ❌ |
+| Own history & trend | ✅ | ✅ (escalated only) | ❌ | ❌ | ❌ |
+| Own privacy centre | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Personal notifications | ✅ | ✅ (escalated only) | ❌ | ❌ | ❌ |
+| Own check-in answers (`/check-in/history`) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Own self-report comparison, with numbers | ✅ | ❌ | ❌ | ❌ | ❌ |
+| *Which indicator* diverged, on a visible case | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Officer queue | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Full case detail & recommendations | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Counterfactual sweep | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Record a welfare action | ❌ | ✅ | ❌ | ❌ | ❌ |
+| What-if simulation | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Unit aggregates | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Near-miss findings & pressure | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Doctor roster & open slots | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Book / cancel an appointment | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Own prescriptions | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Clinic schedule | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Write a prescription note | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Manage the roster / publish slots | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+**Read the two ❌ columns for welfare_officer and commander in the medical
+rows.** That is not a restricted view — no handler in `routes/medical.py` lists
+either role, so there is no route at all. Medical confidentiality is a stricter
+and separate boundary from welfare-risk confidentiality, which is why the roles
+that cross it are separate roles rather than another tier of the same ladder.
 
 ### How authentication & authorization are enforced
 
 1. **Authentication (`jwt_handler.py`):**
    - Cryptographically signs and validates tokens using **HS256 (HMAC-SHA256)**.
    - Built using Python stdlib with optional PyJWT fallback.
-   - Tokens contain claims: `sub` (subject/ID), `role` (personnel, welfare_officer, commander), `iat` (issued at), and `exp` (expiration).
+   - Tokens contain claims: `sub` (subject/ID), `role` (one of the five), `iat` (issued at), `exp` (expiration), and `jti` — a random 128-bit token id.
+   - **Verification also consults the revocation denylist.** `POST /api/auth/logout` adds a token's `jti` to it, and every later request carrying that token is refused. Without this a token stayed valid for its full hour whatever the holder did, which is the wrong default on a shared unit terminal. The trade — a stateless token now needs one stateful lookup — is argued in `backend/auth/token_revocation.py`; the short version is that shortening expiry makes an officer sign in mid-case-review, and rotating the secret ends everybody's session to end one.
+   - The denylist stores **no subject**. A denylist keyed by person would be a second, quieter record of individual activity.
 2. **Header extraction (`rbac.principal_from_headers`):**
    - Parses the `Authorization: Bearer <token>` header and verifies signature.
    - Only in debug mode (`PWIEWS_DEBUG_AUTH=1`) will it fall back to plain `X-Pwiews-Role` headers.
@@ -1681,7 +1830,28 @@ voice_stress_signal.py
 
 ### What commanders can NEVER receive (even if a bug adds it)
 
-`personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`, `welfare_risk_score`, `risk_level`, `contributing_factors`, `voice_stress_signal`, `recommendations`, `case_id`
+`personnel_id`, `pseudonym_id`, `name`, `service_number`, `date_of_birth`,
+`welfare_risk_score`, `risk_level`, `contributing_factors`,
+`voice_stress_signal`, `recommendations`, `case_id`, `family_separated`,
+`self_report_consistency`, `self_reported_strain`, `appointment_id`,
+`prescription_id`, `doctor_id`
+
+The last six are worth reading individually.
+
+- **`family_separated`** — a person's domestic circumstances are the least
+  aggregable thing in the system. The *signal* derived from it aggregates to
+  unit level; the raw fact does not, and must not travel with a payload by
+  accident.
+- **`self_report_consistency` / `self_reported_strain`** — what somebody said
+  about themselves on a voluntary check-in is the single most chilling thing
+  this system could show upward. A person who learns their answers travel to a
+  commander stops answering honestly, and the self-assessment becomes worse
+  than useless. Listed here so the guard refuses it structurally rather than
+  relying on no commander handler ever building it.
+- **`appointment_id` / `prescription_id` / `doctor_id`** — the booking domain is
+  a stricter boundary than welfare risk. No command role has any access to it,
+  and these entries make an accidental join impossible to *serve* rather than
+  merely unlikely to be written.
 
 ---
 
@@ -1735,7 +1905,27 @@ The recommendation engine (`backend/recommendation_engine/`) maps evaluated welf
 
 ## 15. Test suite — what each test file proves
 
-The test suite in `tests/` contains **91 automated tests** verifying core logic, mathematical invariants, and privacy boundaries:
+The test suite in `tests/` contains **385 automated tests** verifying core logic, mathematical invariants, and privacy boundaries.
+
+**The most important thing to understand about this suite** is why
+`test_api_routes.py` exists. The suite used to test the authorisation
+*functions* thoroughly and the *routes* not at all. Three separate defects have
+now lived in exactly that gap:
+
+- a handler that called `require_self` but not `require_role`, leaving an
+  individual's notifications readable at commander level;
+- three personal routes that accepted an officer principal and never applied
+  the escalation gate, so an officer could read any of the 800 records;
+- `GET /check-in` returning a 500 to every caller because the module never
+  imported `json` — the whole self-assessment screen was dead while every
+  check-in test passed, because they all exercised the *store*.
+
+In all three the function was correct and a route failed to call it correctly.
+Route-level guarantees belong in `test_api_routes.py`, driven over HTTP against
+the real ASGI app.
+
+| Test Module | What It Verifies & Proves |
+|---|---|
 
 | Test Module | What It Verifies & Proves |
 |---|---|
@@ -1745,8 +1935,272 @@ The test suite in `tests/` contains **91 automated tests** verifying core logic,
 | `test_recommendation_engine.py` | **Deterministic action mapping.** Proves Normal risk yields empty recommendations, Moderate/High selects correct actions matching SHAP factors, attribution filters operate correctly, and low-confidence flags attach properly. |
 | `test_voice_pipeline.py` | **Voice privacy invariant.** Proves by AST/attribute inspection that no speech-to-text, phoneme, word, or transcript concepts exist in the acoustic feature extractors, and verifies that feature weights sum to 1.0. |
 | `test_behavioral_engine.py` | **Behavioral signal contracts.** Proves that all component weights sum to 1.0, human-readable labels contain no judgemental language, and bounded signals strictly span 0–100. |
+| `test_api_routes.py` ⭐ | **Route-level authorisation, over HTTP.** Sign in, call the route, check the status code — including the officer gate on personal routes, what-if body validation, the check-in question route actually serving, and every medical route refusing a welfare role. |
+| `test_medical.py` | **Domain isolation, enforced at the import graph.** Proves the medical package imports nothing from the analytics side and never names the pseudonym vault; that the two identifier namespaces cannot overlap; and that two people racing for the last appointment slot cannot both get it. |
+| `test_benign_profiles.py` | **The gray-area column never reaches the model.** Runs the real pipeline stages and asserts `benign_profile` is absent from the feature matrix, the signal matrix and every processed payload — and that no signal correlates with the flag closely enough to be a proxy for it. Without this the false-positive number would be measuring the model reading a label we handed it. |
+| `test_signal_coverage.py` | **Every behavioral signal has a check-in question and an intervention.** The ninth signal was added to the engine and to neither, so a case driven by it returned an empty recommendation list in silence. Adding a signal is one edit to a tuple; this is what makes the obligations that edit creates executable rather than remembered. |
+| `test_self_report_consistency.py` | **The officer view carries no answer, no number and no question id.** Also that reverse scoring is applied (without it every reassuring answer reads as an alarming one) and that the module imports nothing from the model layer, which is what makes "answering does not affect your score" structurally true. |
+| `test_counterfactual.py` | **Sweep bookkeeping and honest presentation.** A signal below the median reports a negative reduction rather than being hidden; the disclaimer string is asserted identical to the what-if simulator's; `is_borderline` and `barely_over_cutoff` are proved independent of each other. |
+| `test_token_revocation.py` | **Sign-out is real.** Proves a revoked token is refused through `principal_from_authorization_header` — the path routes actually take — not merely absent from a client-side map, and that revoking one session leaves another working. |
+| `test_intervention_log.py` | **Framing, asserted rather than trusted.** No status name contains "declined", "refused" or their relatives, and no effectiveness analysis exists in the module. |
+| `test_escalation.py` | **One visibility rule.** Proves the queue, the alert rules and the personal routes all resolve to the same decision. |
+| `test_metric_provenance.py` | **No metric travels without its provenance.** Scans judge-facing docs: if one quotes a headline number it must also carry what that number was measured against and point at the source of truth. |
 
 To execute the test suite:
 ```bash
 python -m unittest discover -s tests
 ```
+
+---
+
+## 16. The gray-area group
+
+### The problem it solves
+
+The system's answer to PS technical challenge #3 — minimising false positives —
+used to be a set of real mechanisms with no measurement behind them: a wide
+Moderate band, persistence gating, low-confidence suppression. All real. None
+testable, because **the corpus contained nobody who looked strained and was
+fine.** Every high-indicator person had a high label, because the label is a
+formula over those same indicators. So a false-positive rate could be described
+and not reported.
+
+### What was added
+
+About 5% of the roster (40 of 800) carries a `benign_profile`:
+
+| Profile | Looks like | Actually |
+|---|---|---|
+| `training_cadre` | Very high duty hours | Instructor. Regular schedule, leave available, predictable week. |
+| `course_attendee` | High training hours, irregular pattern | On a long course. Temporary and planned. |
+| `voluntary_hard_area` | Long hard-area tenure | Requested the posting; family relocated with them. |
+| `planned_surge` | High hours, low leave | Unit mid-exercise with a rotation date already fixed. |
+| `recent_return` | Big change ratios everywhere | Just back from long leave, so every trailing window shows a step. |
+
+Their generated behaviour is shaped to match — an instructor gets higher hours
+*and* lower within-month variance *and* better leave availment — and their label
+is multiplied by `settings.BENIGN_LABEL_DAMPENING` (0.55).
+
+### The one thing that makes it work
+
+**`benign_profile` must be invisible to the model.** Given the column, a
+gradient-boosting model learns the flag in one split, scores every benign person
+low for entirely the wrong reason, and the false-positive rate becomes a
+measurement of the model reading a label we handed it. The number would look
+excellent and mean nothing, which is worse than not reporting one.
+
+So it is generation-only — not in `hr_features.CONTEXT_COLUMNS`, not in
+`behavioral_signals.CARRIED_CONTEXT`, not a model feature — exactly the
+discipline `latent_strain` gets in `voice_loader.GENERATION_ONLY_COLUMNS`. And
+"we were careful" is not a mechanism, so `tests/test_benign_profiles.py` runs the
+real pipeline stages and asserts its absence, then separately asserts that no
+signal correlates with the flag closely enough to act as a proxy.
+
+### The result, and how to say it
+
+| | Gray-area | Everybody else |
+|---|---|---|
+| Population | 40 | 760 |
+| Classified High | **0 (0.0%)** | 123 (16.2%) |
+| Reached the officer queue | 1 (2.5%) | 141 (18.6%) |
+
+Restricted to the 160 people the deployed model was never fitted on: **0 of 8
+against 20.4%.**
+
+**Say the held-out version, and say that eight is small.** Against a 20.4% base
+rate the expected count for eight people is about 1.6, and observing zero has a
+probability near 0.17 under the null — so it is *consistent with* the mechanism
+working and is not strong evidence alone. What it establishes is that the
+mechanism has been exercised against cases built to defeat it.
+
+### Why R² fell, and why that is the point
+
+0.821 → 0.760. Forty people now carry a label that genuinely cannot be recovered
+from their features. R² is a formula-recovery metric, so it fell because part of
+the formula stopped being reachable. **A model that still scored 0.82 would be
+telling us the group was trivially separable**, which would mean this whole
+exercise measured nothing. The conformal interval widened (±9.9 → ±12.8) for the
+same reason, and an interval that had *not* widened would be the worrying result.
+
+---
+
+## 17. Counterfactuals
+
+`backend/post_model_analytics/counterfactual.py`. For each behavioral signal in
+turn, the case is re-scored with that one signal held at the force median and
+the movement reported, ranked largest first.
+
+### It is not the SHAP explanation, and they can disagree
+
+| | Question | Answer |
+|---|---|---|
+| SHAP | What **built** this score? | Contributions summing exactly to the score |
+| Counterfactual | What would **change** this score? | Projected score per single substitution |
+
+With a non-linear model these genuinely differ: gradient boosting can attribute
+a large share of a score to a signal whose counterfactual is small — the model
+has saturated on it, so moving it buys nothing — and the reverse. Officers *will*
+notice the two lists disagree, so they render as separate panels with their own
+headings and are never merged. Neither is the corrected version of the other.
+
+### It is model sensitivity, not causality
+
+"Bringing duty hours to typical would move this case from 71 to 58" does **not**
+mean granting leave will make the person fine. It means the model responds that
+way to that input. The response carries the same `is_illustrative` flag and
+*the same disclaimer string* as the what-if simulator — deliberately identical,
+because two differently-softened disclaimers invite a reader to decide which one
+is the serious one. A test asserts the strings match.
+
+A signal *below* the median reports a **negative** reduction rather than being
+clipped or dropped: normalising a condition that is already better than typical
+would raise the score, and hiding that lets an officer read the list as "nine
+things that would help".
+
+### The two proximity flags
+
+- **`is_borderline`** — the *calibrated range* crosses a cutoff. The measurement
+  cannot settle the band.
+- **`barely_over_cutoff`** — the *point estimate* is within
+  `settings.RISK_BAND_MARGIN` (3.0) of the cutoff that admitted its band.
+
+Either can be true without the other. A score five points clear with a
+twelve-point interval is borderline, not barely-over; a score one point over,
+measured tightly, is barely-over, not borderline. Collapsing them loses the
+distinction between "we are unsure" and "it is close".
+
+---
+
+## 18. Self-report consistency
+
+`backend/post_model_analytics/self_report_consistency.py`. Every check-in
+question is tagged in the bank to a behavioral signal, so an answer can be put
+beside what the duty and leave records independently show for that same signal.
+
+### Why it matters specifically here
+
+In a uniformed-forces culture, saying you are struggling carries a real social
+cost. So the people under the most strain are statistically the **most** likely
+to answer "fine". A system that leans partly on self-report and cannot notice
+that pattern will systematically miss exactly the people it exists to catch —
+PS technical challenge #2 (stigmatisation) producing PS challenge #3 (false
+negatives).
+
+### The rule that keeps it safe
+
+**It does not touch the model, the score, or the band.** That is load-bearing.
+If answering honestly could raise your visible score, people learn within one
+cycle to answer "fine" every time, the self-assessment stops carrying
+information, and the data gets *worse* than having none. The "answering is
+entirely optional and does not affect your score" line has to stay true for the
+feature to work, and a test asserts the module imports nothing from the model
+layer.
+
+### The asymmetry, and why it is structural
+
+| | Sees |
+|---|---|
+| The individual | Their own comparison in full, numbers included |
+| Welfare officer | One line naming which signals diverged — no answers, no numbers, no question ids — on a case already visible to them |
+| Commander | Nothing. Both field names are in `COMMANDER_FORBIDDEN_FIELDS` |
+
+The report has **two serialisations** rather than one filtered at the call site.
+`to_officer_dict()` cannot leak a number because it never puts one in; filtering
+at the call site would be one forgotten call away from leaking.
+
+The outcomes are named for what the *self-report* did relative to the *record* —
+`self_report_below_record`, never "under-reported". There is no honesty score
+and there must never be one: a divergence can mean the duty extract is stale, or
+that a person copes differently from what the numbers suggest.
+
+---
+
+## 19. The medical domain
+
+`backend/medical/`. Doctor roster, availability, booking, one prescription note
+per visit. Read `backend/medical/README.md` for the full argument; the essentials:
+
+### Why it is a second subsystem, not a feature
+
+- **It is the first transactional thing here.** Everything else is "batch
+  computes once, API serves static JSON". A slot is either taken or it is not,
+  and two people must not both get it.
+- **It needs two roles that hold no welfare permission** — and, more to the
+  point, `welfare_officer` and `commander` hold **no permission here**. Medical
+  confidentiality is a stricter, separate boundary, not another tier of the
+  same one.
+- **It needs a real identity**, and the welfare system deliberately has none.
+
+### The identifier namespaces
+
+| Domain | Shape | Example |
+|---|---|---|
+| Welfare | `PSN` + 16 hex | `PSNa1b2c3d4e5f60718` |
+| Medical | `P` + 5 digits | `P00123` |
+
+Disjoint, and each domain refuses the other's at the boundary. This does not
+make the link impossible for someone holding the vault — that path exists, is
+narrow, and is audited. It makes the link impossible **by accident**: a helper
+passing a subject through, a join written in a hurry, a route reusing the wrong
+path parameter. Those are how this kind of separation actually fails.
+
+### The three rules
+
+1. **Booking is open to everyone, never gated by risk.** A gated button would
+   itself disclose the band to anyone watching. There is no risk check in any
+   route, and there could not be — the package cannot read the processed store.
+   The same reasoning rules out a priority queue: faster appointments for
+   higher-risk people would leak the score through booking order.
+2. **The doctor never sees the score or the signals.** A clinician treating
+   somebody differently because "the algorithm flagged them" is the
+   stigmatisation the system exists to avoid.
+3. **Sharing context is opt-in, per appointment, off by default.** `share_context`
+   must arrive as boolean `true`; anything else is "no", because consent is
+   something a person gives and never something a malformed field gives on their
+   behalf. Where somebody did not share, the field is **absent** from the
+   doctor's view rather than empty — an empty box reads as having nothing to
+   say, which is a different statement from not being asked.
+
+### The concurrency detail worth knowing
+
+`book()` claims the slot with `UPDATE … WHERE is_booked = 0` and checks the
+affected row count, inside the same transaction that writes the appointment. Two
+requests racing for the last slot cannot both win. Reading availability first and
+then inserting would look identical and lose that race — a real double-booking in
+a real clinic.
+
+---
+
+## 20. The officer queue
+
+Two decisions that must not become one number.
+
+**Visibility** — who an officer *may* see — is the escalation rule: High, or
+persistent Moderate that is Rising. One definition, in `escalation.py`, imported
+by the queue, the alert rules and the personal routes.
+
+**Capacity** — how many are shown *first* — is
+`settings.OFFICER_QUEUE_TARGET_SIZE` (60). A statement about an officer's
+working caseload, not about any person.
+
+Collapsing them would make an individual's visibility depend on how many other
+people happen to be in difficulty that month. So the cap **prioritises and does
+not filter**:
+
+- `total_eligible` is always reported beside `visible_count`;
+- `held_back_count` says how many were not shown;
+- `?all=1` returns every eligible case with no cap;
+- a held-back case is still openable, and a test proves it;
+- nobody's score, band or notification changes because of where they landed.
+
+Capping a welfare queue does mean somebody genuinely at risk sits below the
+fold. That cost is real and is stated in the payload rather than hidden behind a
+shorter list. The honest phrasing is "prioritised, with the remainder one click
+away" — never "filtered".
+
+**Order of operations, because it was measured:** the escalation rule was
+tightened first (619 → 159 of 800 on the corpus where it was introduced) and the
+cap was added only afterwards. Tightening a rule that admits 77% of the force is
+a better fix than capping the list it produces. On the current corpus the cap is
+close to non-binding, which is the state it should be in — a cap doing heavy
+lifting means the rule above it is still wrong.

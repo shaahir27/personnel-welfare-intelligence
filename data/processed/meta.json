@@ -1,24 +1,24 @@
 {
-  "generated_at": "2026-09-03T16:54:32.166061+00:00",
+  "generated_at": "2026-09-04T14:34:22.067902+00:00",
   "reference_date": "2026-09-01",
   "latest_snapshot": "2026-09-01",
   "population": 800,
   "snapshot_count": 6,
   "voice_coverage": 0.0042,
   "model": {
-    "version": "v20260903T164524Z",
+    "version": "v20260904T135706Z",
     "name": "gradient_boosting",
     "display_name": "Gradient Boosting Regressor",
     "is_tree_based": true,
-    "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0156 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
+    "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0004 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
     "metrics": {
-      "mae": 4.509288884150924,
-      "rmse": 5.759749785864446,
-      "r2": 0.8213865927559669,
-      "band_accuracy": 0.8052083333333333,
-      "high_recall": 0.7068062827225131,
-      "high_precision": 0.7941176470588235,
-      "escalation_recall": 0.9582790091264668
+      "mae": 5.492097402800828,
+      "rmse": 7.440652964927863,
+      "r2": 0.7599924120328159,
+      "band_accuracy": 0.7979166666666667,
+      "high_recall": 0.6464646464646465,
+      "high_precision": 0.7852760736196319,
+      "escalation_recall": 0.9546703296703297
     },
     "feature_names": [
       "workload_deviation_signal",
@@ -37,39 +37,142 @@
   "thresholds": {
     "risk_moderate_min": 40.0,
     "risk_high_min": 65.0,
-    "min_unit_size_for_aggregate": 10
+    "risk_band_margin": 3.0,
+    "min_unit_size_for_aggregate": 10,
+    "officer_queue_target_size": 60
   },
   "band_distribution": {
-    "Normal": 120,
-    "Moderate": 535,
-    "High": 145
+    "Normal": 156,
+    "Moderate": 521,
+    "High": 123
   },
   "band_certainty": {
-    "certain": 201,
-    "borderline": 599
+    "certain": 53,
+    "borderline": 747
   },
-  "officer_visible_count": 159,
+  "near_miss_closest_units": [
+    {
+      "unit_id": "U010",
+      "thresholds_crossed": 2,
+      "personnel_count": 53,
+      "shortfall_condition": "recovery_deficit",
+      "shortfall_amount": 0.2,
+      "margins": {
+        "demand": 3.9,
+        "recovery_deficit": -0.2,
+        "staffing": 0.158
+      }
+    },
+    {
+      "unit_id": "U016",
+      "thresholds_crossed": 2,
+      "personnel_count": 44,
+      "shortfall_condition": "recovery_deficit",
+      "shortfall_amount": 0.3,
+      "margins": {
+        "demand": 4.9,
+        "recovery_deficit": -0.3,
+        "staffing": 0.121
+      }
+    },
+    {
+      "unit_id": "U015",
+      "thresholds_crossed": 2,
+      "personnel_count": 67,
+      "shortfall_condition": "recovery_deficit",
+      "shortfall_amount": 0.8,
+      "margins": {
+        "demand": 2.7,
+        "recovery_deficit": -0.8,
+        "staffing": 0.045
+      }
+    }
+  ],
+  "signal_medians": {
+    "workload_deviation_signal": 52.25,
+    "recovery_pattern_signal": 33.9,
+    "deployment_stability_signal": 52.7,
+    "schedule_irregularity_signal": 37.3,
+    "posting_hardship_signal": 27.5,
+    "transfer_churn_signal": 17.5,
+    "training_load_signal": 18.25,
+    "leave_deficit_signal": 25.3,
+    "family_separation_signal": 0.0
+  },
+  "counterfactual_reference": "population_median",
+  "benign_profile_check": {
+    "available": true,
+    "definition": "Personnel whose raw duty, leave and posting indicators look strained for a documented benign reason (instructor, course attendee, volunteer for a hard-area posting, unit mid-exercise with a fixed rotation date, or just back from long leave). Nothing the model sees identifies them.",
+    "dampening_factor": 0.55,
+    "benign_count": 40,
+    "benign_high_count": 0,
+    "benign_high_rate": 0.0,
+    "benign_officer_visible_count": 1,
+    "benign_officer_visible_rate": 0.025,
+    "rest_count": 760,
+    "rest_high_rate": 0.1618,
+    "rest_officer_visible_rate": 0.1855,
+    "held_out": {
+      "note": "The same rates over only the people the deployed model was never fitted on. Most of the gray-area group is in the training set, so the headline rate above is open to 'of course it got those right'. This is the answer to that. The group is small, so read the counts, not just the rates.",
+      "benign_count": 8,
+      "benign_high_count": 0,
+      "benign_high_rate": 0.0,
+      "benign_officer_visible_rate": 0.0,
+      "rest_count": 152,
+      "rest_high_rate": 0.2039,
+      "rest_officer_visible_rate": 0.2237
+    },
+    "by_profile": {
+      "voluntary_hard_area": {
+        "n": 4,
+        "high": 0,
+        "officer_visible": 1
+      },
+      "planned_surge": {
+        "n": 11,
+        "high": 0,
+        "officer_visible": 0
+      },
+      "course_attendee": {
+        "n": 7,
+        "high": 0,
+        "officer_visible": 0
+      },
+      "recent_return": {
+        "n": 7,
+        "high": 0,
+        "officer_visible": 0
+      },
+      "training_cadre": {
+        "n": 11,
+        "high": 0,
+        "officer_visible": 0
+      }
+    },
+    "reading_note": "Measured against the synthetic label, like every other figure in this file, and the group exists because of an explicit assumption (settings.BENIGN_LABEL_DAMPENING). It shows the false-positive mechanisms have been exercised against cases built to defeat them. See docs/model_comparison_report.md section 5."
+  },
+  "officer_visible_count": 142,
   "escalation_rule": "A case is visible to a welfare officer only when it is currently High, or has been Moderate or above for 3 consecutive snapshots with a rising trend. Everyone else is scored and can see their own result, but is not shown to an officer.",
   "conformal": {
     "method": "split-conformal-absolute-residual",
     "coverage": 0.9,
-    "half_width": 9.8879,
+    "half_width": 12.769,
     "calibration_rows": 768,
     "calibration_people": 128,
     "quantile_rank": 693,
     "verified_on_test_rows": 960,
     "verified_on_test_people": 160,
-    "empirical_test_coverage": 0.9146,
+    "empirical_test_coverage": 0.924,
     "note": "Coverage is with respect to the label the model was trained on. On the synthetic corpus that label is the generator's formula plus injected noise; the interval quantifies model error against that label and is not validation against real welfare outcomes."
   },
   "deployed_metrics": {
-    "mae": 4.549564862995546,
-    "rmse": 5.781073316928057,
-    "r2": 0.8200616328757688,
-    "band_accuracy": 0.8,
-    "high_recall": 0.6858638743455497,
-    "high_precision": 0.7987804878048781,
-    "escalation_recall": 0.9608865710560626
+    "mae": 5.569860063484962,
+    "rmse": 7.530191112461506,
+    "r2": 0.7541813265265942,
+    "band_accuracy": 0.7895833333333333,
+    "high_recall": 0.6666666666666666,
+    "high_precision": 0.7542857142857143,
+    "escalation_recall": 0.9519230769230769
   },
   "signal_labels": {
     "workload_deviation_signal": "Duty hours above the standard workload",

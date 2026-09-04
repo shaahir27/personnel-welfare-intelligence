@@ -2,18 +2,21 @@
   "_about": {
     "purpose": "Fixed bank of optional self-assessment questions for the personal wellness app. Selection is rule-based: two general questions plus up to three tagged to the signals currently contributing most to the person's own score. No question is generated at request time and no language model is involved anywhere in this path.",
     "framing_rule": "Every question asks about circumstances or how the person is finding them. None asks the person to self-diagnose, and none is phrased so that an answer could read as an admission. Answers are stored against the person's own record and are never shown to a commander.",
-    "answer_scale": "0 = not at all, 4 = a great deal"
+    "answer_scale": "0 = not at all, 4 = a great deal",
+    "maps_to_signal_rule": "A question carrying 'maps_to_signal', and every question under 'by_signal', names the behavioral signal its answer describes. backend/post_model_analytics/self_report_consistency.py uses that pairing to compare what a person says against what the duty record independently shows. The mapping is written here as data rather than inferred in code, so it can be read and argued with. It is never an input to scoring."
   },
   "general": [
     {
       "id": "GEN01",
       "text": "Over the last two weeks, how manageable has your workload felt?",
-      "reverse_scored": true
+      "reverse_scored": true,
+      "maps_to_signal": "workload_deviation_signal"
     },
     {
       "id": "GEN02",
       "text": "Over the last two weeks, how well have you been able to rest when off duty?",
-      "reverse_scored": true
+      "reverse_scored": true,
+      "maps_to_signal": "recovery_pattern_signal"
     },
     {
       "id": "GEN03",
@@ -105,6 +108,17 @@
       {
         "id": "LVE02",
         "text": "How much would taking your full leave entitlement help right now?"
+      }
+    ],
+    "family_separation_signal": [
+      {
+        "id": "FAM01",
+        "text": "How much has being posted away from your family been on your mind recently?"
+      },
+      {
+        "id": "FAM02",
+        "text": "How well have you been able to stay in touch with people at home?",
+        "reverse_scored": true
       }
     ],
     "voice_stress_signal": [

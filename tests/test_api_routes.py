@@ -362,13 +362,53 @@ class TestCalibratedIntervalsReachTheWire(ApiRouteTestCase):
             self.assertIn(row["band_certainty"], ("certain", "borderline"))
             self.assertIsNotNone(row["interval"])
 
-    def test_queue_is_exactly_the_escalation_rule(self) -> None:
+    def test_uncapped_queue_is_exactly_the_escalation_rule(self) -> None:
+        """?all=1 must be the escalation rule and nothing else.
+
+        This is the guarantee the capacity cap must not be allowed to blur: the
+        set of people an officer *may* see is decided by one rule, in one place.
+        The cap decides how many are shown first, which is a different question
+        and must never remove anybody from the eligible set.
+        """
         from backend.post_model_analytics import escalation
 
         token = self.sign_in(OFFICER)
-        queue = self.client.get("/api/officer/queue", headers=_bearer(token)).json()
+        queue = self.client.get("/api/officer/queue?all=1", headers=_bearer(token)).json()
         expected = {c["pseudonym_id"] for c in self.store.cases if escalation.is_officer_visible(c)}
         self.assertEqual({row["pseudonym_id"] for row in queue["cases"]}, expected)
+        self.assertTrue(queue["showing_all"])
+        self.assertEqual(queue["held_back_count"], 0)
+
+    def test_capped_queue_is_a_prefix_of_the_eligible_list(self) -> None:
+        """The default view prioritises; it must not filter.
+
+        Every case shown must be one the rule admits, the response must say how
+        many were held back, and the held-back ones must still be reachable --
+        otherwise "prioritised, with the remainder one click away" is not true
+        and the honest wording would be "filtered".
+        """
+        token = self.sign_in(OFFICER)
+        capped = self.client.get("/api/officer/queue", headers=_bearer(token)).json()
+        every = self.client.get("/api/officer/queue?all=1", headers=_bearer(token)).json()
+
+        self.assertLessEqual(capped["visible_count"], settings.OFFICER_QUEUE_TARGET_SIZE)
+        self.assertEqual(capped["total_eligible"], every["visible_count"])
+        self.assertEqual(
+            capped["held_back_count"], capped["total_eligible"] - capped["visible_count"]
+        )
+        shown = [row["pseudonym_id"] for row in capped["cases"]]
+        self.assertEqual(shown, [row["pseudonym_id"] for row in every["cases"]][: len(shown)])
+        self.assertIn("capacity_rule", capped)
+
+    def test_a_held_back_case_is_still_openable(self) -> None:
+        """Nobody the rule admits may become unreachable because of the cap."""
+        token = self.sign_in(OFFICER)
+        every = self.client.get("/api/officer/queue?all=1", headers=_bearer(token)).json()
+        if every["visible_count"] <= settings.OFFICER_QUEUE_TARGET_SIZE:
+            self.skipTest("cap is not binding on this corpus")
+        held_back = every["cases"][settings.OFFICER_QUEUE_TARGET_SIZE]["pseudonym_id"]
+        response = self.client.get(f"/api/officer/case/{held_back}", headers=_bearer(token))
+        self.assertEqual(response.status_code, 200)
 
     def test_personal_summary_carries_the_range(self) -> None:
         token = self.sign_in(PERSONNEL, self.pseudonym_id)
@@ -490,6 +530,325 @@ class TestCommanderRoutesStayAggregate(ApiRouteTestCase):
         token = self.sign_in(OFFICER)
         response = self.client.get("/api/commander/units", headers=_bearer(token))
         self.assertEqual(response.status_code, 403)
+
+
+class TestCheckInRoutes(ApiRouteTestCase):
+    """The self-assessment path, end to end.
+
+    ``GET /check-in`` is here because it was returning a 500 to every caller:
+    the handler called ``json.loads`` and the module never imported ``json``.
+    The whole suite was green, because every check-in test exercised the store
+    and none of them exercised the route. That is the same gap the two
+    authorisation defects lived in -- a correct function, and nothing checking
+    that a route called it correctly.
+    """
+
+    def test_check_in_questions_are_actually_served(self) -> None:
+        token = self.sign_in(PERSONNEL, self.pseudonym_id)
+        response = self.client.get(
+            f"/api/personal/{self.pseudonym_id}/check-in", headers=_bearer(token)
+        )
+        self.assertEqual(
+            response.status_code,
+            200,
+            "the check-in question route is not serving; PS component 2 is the "
+            "self-assessment app and this is the route it opens with",
+        )
+        body = response.json()
+        self.assertTrue(body["general"])
+        self.assertIn("answer_scale", body)
+        self.assertIn("no question is generated", body["tailoring_method"].lower())
+
+    def test_tailored_questions_name_a_real_signal(self) -> None:
+        token = self.sign_in(PERSONNEL, self.pseudonym_id)
+        body = self.client.get(
+            f"/api/personal/{self.pseudonym_id}/check-in", headers=_bearer(token)
+        ).json()
+        for question in body["tailored"]:
+            with self.subTest(question=question["id"]):
+                self.assertIn(question["tailored_to"], settings.MODEL_FEATURE_NAMES)
+
+    def test_an_officer_may_not_read_the_question_route(self) -> None:
+        # The questions are tailored to the person's own top signals, so the
+        # question set is itself a statement about them.
+        token = self.sign_in(OFFICER)
+        response = self.client.get(
+            f"/api/personal/{self.pseudonym_id}/check-in", headers=_bearer(token)
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_submit_then_read_back_your_own_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "check_ins.jsonl"
+            with mock.patch.object(settings, "CHECKIN_RESPONSES_PATH", path):
+                token = self.sign_in(PERSONNEL, self.pseudonym_id)
+                posted = self.client.post(
+                    f"/api/personal/{self.pseudonym_id}/check-in",
+                    headers=_bearer(token),
+                    json={"answers": [{"question_id": "GEN01", "value": 4}]},
+                )
+                self.assertEqual(posted.status_code, 201)
+
+                history = self.client.get(
+                    f"/api/personal/{self.pseudonym_id}/check-in/history",
+                    headers=_bearer(token),
+                ).json()
+                self.assertEqual(history["submission_count"], 1)
+                answer = history["submissions"][0]["answers"][0]
+                self.assertEqual(answer["question_id"], "GEN01")
+                self.assertTrue(answer["text_asked"])
+
+    def test_history_is_personnel_only(self) -> None:
+        # There is deliberately no officer path to a person's actual answers.
+        for account in (OFFICER, COMMANDER):
+            with self.subTest(account=account["username"]):
+                token = self.sign_in(account)
+                response = self.client.get(
+                    f"/api/personal/{self.pseudonym_id}/check-in/history",
+                    headers=_bearer(token),
+                )
+                self.assertEqual(response.status_code, 403)
+
+
+class TestSelfReportConsistencyOnTheWire(ApiRouteTestCase):
+
+    def test_personal_summary_carries_the_full_comparison(self) -> None:
+        token = self.sign_in(PERSONNEL, self.pseudonym_id)
+        body = self.client.get(
+            f"/api/personal/{self.pseudonym_id}/summary", headers=_bearer(token)
+        ).json()
+        self.assertIn("self_report_consistency", body)
+        self.assertIn("not_used_for", body["self_report_consistency"])
+
+    def test_officer_case_detail_carries_only_the_divergence(self) -> None:
+        token = self.sign_in(OFFICER)
+        pseudonym_id = self.visible_case()
+        body = self.client.get(
+            f"/api/officer/case/{pseudonym_id}", headers=_bearer(token)
+        ).json()
+        payload = body["self_report_consistency"]
+        self.assertEqual(
+            sorted(payload),
+            ["available", "diverging_signals", "handling_note", "has_divergence", "note"],
+        )
+        self.assertNotIn("comparisons", payload)
+
+
+class TestCounterfactualRoute(ApiRouteTestCase):
+
+    def test_a_visible_case_returns_a_sweep(self) -> None:
+        token = self.sign_in(OFFICER)
+        pseudonym_id = self.visible_case()
+        body = self.client.get(
+            f"/api/officer/case/{pseudonym_id}/counterfactual", headers=_bearer(token)
+        ).json()
+        self.assertTrue(body["is_illustrative"])
+        self.assertIn("not a forecast", body["disclaimer"])
+        self.assertTrue(body["summary"])
+        for entry in body["entries"]:
+            with self.subTest(signal=entry["signal_name"]):
+                self.assertIn(entry["signal_name"], settings.BEHAVIORAL_SIGNAL_NAMES)
+
+    def test_a_hidden_case_is_refused(self) -> None:
+        token = self.sign_in(OFFICER)
+        response = self.client.get(
+            f"/api/officer/case/{self.hidden_case()}/counterfactual",
+            headers=_bearer(token),
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_no_other_role_may_call_it(self) -> None:
+        pseudonym_id = self.visible_case()
+        # The commander account has a fixed subject and may not request one, so
+        # it signs in without; only the personnel account acts as a pseudonym.
+        for account, subject in ((COMMANDER, None), (PERSONNEL, pseudonym_id)):
+            with self.subTest(account=account["username"]):
+                token = self.sign_in(account, subject)
+                response = self.client.get(
+                    f"/api/officer/case/{pseudonym_id}/counterfactual",
+                    headers=_bearer(token),
+                )
+                self.assertEqual(response.status_code, 403)
+
+
+class TestInterventionRecordingRoute(ApiRouteTestCase):
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(
+            settings,
+            "INTERVENTION_LOG_DB_PATH",
+            Path(self._tmp.name) / "interventions.sqlite3",
+        )
+        self._patch.start()
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def test_recording_then_reading_back_on_the_case(self) -> None:
+        token = self.sign_in(OFFICER)
+        pseudonym_id = self.visible_case()
+        posted = self.client.post(
+            f"/api/officer/case/{pseudonym_id}/intervention",
+            headers=_bearer(token),
+            json={
+                "intervention_id": "schedule_leave",
+                "status": "arranged",
+                "note": "Leave application forwarded to the reporting officer.",
+            },
+        )
+        self.assertEqual(posted.status_code, 201)
+
+        detail = self.client.get(
+            f"/api/officer/case/{pseudonym_id}", headers=_bearer(token)
+        ).json()
+        self.assertEqual(len(detail["welfare_actions"]), 1)
+        self.assertEqual(detail["welfare_actions"][0]["status"], "arranged")
+
+    def test_an_unknown_intervention_is_a_400(self) -> None:
+        token = self.sign_in(OFFICER)
+        response = self.client.post(
+            f"/api/officer/case/{self.visible_case()}/intervention",
+            headers=_bearer(token),
+            json={"intervention_id": "promote_them", "status": "arranged"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_an_unknown_status_is_a_400(self) -> None:
+        token = self.sign_in(OFFICER)
+        response = self.client.post(
+            f"/api/officer/case/{self.visible_case()}/intervention",
+            headers=_bearer(token),
+            json={"intervention_id": "schedule_leave", "status": "refused_by_jawan"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_a_hidden_case_cannot_be_written_to(self) -> None:
+        token = self.sign_in(OFFICER)
+        response = self.client.post(
+            f"/api/officer/case/{self.hidden_case()}/intervention",
+            headers=_bearer(token),
+            json={"intervention_id": "schedule_leave", "status": "offered"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+class TestLogoutEndsTheSession(ApiRouteTestCase):
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(
+            settings,
+            "TOKEN_REVOCATION_DB_PATH",
+            Path(self._tmp.name) / "revoked.sqlite3",
+        )
+        self._patch.start()
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._tmp.cleanup()
+
+    def test_a_signed_out_token_is_refused_afterwards(self) -> None:
+        token = self.sign_in(OFFICER)
+        self.assertEqual(
+            self.client.get("/api/officer/queue", headers=_bearer(token)).status_code, 200
+        )
+
+        out = self.client.post("/api/auth/logout", headers=_bearer(token))
+        self.assertEqual(out.status_code, 200)
+        self.assertTrue(out.json()["revoked"])
+
+        self.assertEqual(
+            self.client.get("/api/officer/queue", headers=_bearer(token)).status_code,
+            403,
+            "the token still works after sign-out; revocation is not on the "
+            "path every route actually takes",
+        )
+
+    def test_signing_out_twice_is_not_an_error(self) -> None:
+        token = self.sign_in(OFFICER)
+        self.client.post("/api/auth/logout", headers=_bearer(token))
+        second = self.client.post("/api/auth/logout", headers=_bearer(token))
+        # The token is revoked, so the second attempt cannot authenticate --
+        # which is the correct outcome, not a crash.
+        self.assertIn(second.status_code, (200, 403))
+
+    def test_one_sign_out_does_not_end_another_session(self) -> None:
+        first = self.sign_in(OFFICER)
+        second = self.sign_in(OFFICER)
+        self.client.post("/api/auth/logout", headers=_bearer(first))
+        self.assertEqual(
+            self.client.get("/api/officer/queue", headers=_bearer(second)).status_code, 200
+        )
+
+
+class TestMedicalDomainIsSealedOff(ApiRouteTestCase):
+    """No welfare or command role may reach the booking domain, over the wire."""
+
+    MEDICAL_GETS = (
+        "/api/medical/doctors",
+        "/api/medical/slots",
+        "/api/medical/appointments",
+        "/api/medical/schedule",
+    )
+
+    def test_a_welfare_officer_is_refused_everywhere(self) -> None:
+        token = self.sign_in(OFFICER)
+        for path in self.MEDICAL_GETS:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.get(path, headers=_bearer(token)).status_code, 403
+                )
+
+    def test_a_commander_is_refused_everywhere(self) -> None:
+        token = self.sign_in(COMMANDER)
+        for path in self.MEDICAL_GETS:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.get(path, headers=_bearer(token)).status_code, 403
+                )
+
+    def test_a_welfare_pseudonym_is_refused_as_a_patient_identity(self) -> None:
+        # The two namespaces are disjoint and each refuses the other's. This is
+        # what stops the medical store becoming joinable to the analytics store
+        # by anybody who can pass an identifier along.
+        token = self.sign_in(PERSONNEL, self.pseudonym_id)
+        response = self.client.get("/api/medical/appointments", headers=_bearer(token))
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("namespace", response.json()["detail"])
+
+    def test_a_service_identity_is_accepted(self) -> None:
+        token = self.sign_in(PERSONNEL, "P00123")
+        self.assertEqual(
+            self.client.get(
+                "/api/medical/appointments", headers=_bearer(token)
+            ).status_code,
+            200,
+        )
+
+    def test_a_medical_officer_holds_no_welfare_permission(self) -> None:
+        # The boundary runs both ways. A doctor is not a welfare officer.
+        token = self.sign_in({"username": "doctor", "password": "medical-officer-demo"})
+        for path in (
+            "/api/officer/queue",
+            f"/api/personal/{self.pseudonym_id}/summary",
+            "/api/commander/units",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.get(path, headers=_bearer(token)).status_code, 403
+                )
+
+    def test_an_establishment_admin_holds_no_welfare_permission(self) -> None:
+        token = self.sign_in(
+            {"username": "establishment", "password": "establishment-demo"}
+        )
+        for path in ("/api/officer/queue", "/api/commander/units"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.get(path, headers=_bearer(token)).status_code, 403
+                )
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ from starlette.routing import Mount, Route  # noqa: E402
 from starlette.staticfiles import StaticFiles  # noqa: E402
 
 from backend.api import store as store_module  # noqa: E402
-from backend.api.routes import auth, commander, officer, personal  # noqa: E402
+from backend.api.routes import auth, commander, medical, officer, personal  # noqa: E402
 from backend.auth import rbac  # noqa: E402
 from backend.config import settings  # noqa: E402
 from backend.post_model_analytics import escalation  # noqa: E402
@@ -99,8 +99,15 @@ async def meta(request: Request) -> JSONResponse:
             "conformal": current.meta.get("conformal"),
             "escalation_rule": escalation.visibility_rule_text(),
             "officer_visible_count": current.meta.get("officer_visible_count"),
+            "officer_queue_target_size": settings.OFFICER_QUEUE_TARGET_SIZE,
+            "signal_medians": current.meta.get("signal_medians"),
+            "counterfactual_reference": current.meta.get("counterfactual_reference"),
+            "benign_profile_check": current.meta.get("benign_profile_check"),
             "signal_labels": current.meta.get("signal_labels"),
             "roles": list(settings.ROLES),
+            "welfare_roles": list(settings.WELFARE_ROLES),
+            "medical_roles": list(settings.MEDICAL_ROLES),
+            "medical_scope": medical.scope_summary(),
             "auth_note": (
                 "Every role-scoped route requires a signed HS256 token from "
                 "POST /api/auth/login. The plain X-Pwiews-Role header is "
@@ -208,6 +215,7 @@ def build_app(processed_dir: Path | None = None) -> Starlette:
         *personal.routes(),
         *officer.routes(),
         *commander.routes(),
+        *medical.routes(),
     ]
 
     static_routes = []

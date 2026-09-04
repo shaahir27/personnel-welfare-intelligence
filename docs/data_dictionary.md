@@ -22,6 +22,28 @@ Sourcing convention (matches `settings.py`):
 | `rank` | string | SOURCE: CRPF rank structure | No | One of 8 values in `settings.RANKS` |
 | `posting_type` | string | SOURCE: CAPF posting policy | No | `hard_area`, `field`, `static_station` |
 | `date_of_joining` | date | ASSUMPTION | No | Used to compute service length |
+| `benign_profile` | string | ASSUMPTION | Yes (empty for ~95%) | **Generation-only.** Marks the gray-area group: people whose raw indicators look strained for a documented benign reason. One of `training_cadre`, `course_attendee`, `voluntary_hard_area`, `planned_surge`, `recent_return`. Stripped before feature engineering — it is **not** in `hr_features.CONTEXT_COLUMNS` and never reaches the model. See below. |
+
+**On `benign_profile`, because it is the one column here that must never travel.**
+
+It exists so the system's false-positive behaviour can be *measured* rather than
+described. Roughly 5% of the roster looks strained on every raw indicator for a
+documented benign reason — an instructor on very high but regular hours, someone
+on a long course, a volunteer for a hard-area posting who relocated their family,
+a unit mid-exercise with a fixed rotation date, someone just back from long leave
+so every trailing window shows a step change. Their generated behaviour is shaped
+to match the profile, and their label is dampened by
+`settings.BENIGN_LABEL_DAMPENING` (0.55 — a multiplier so it cannot go negative,
+and well short of zero because an instructor working 270 hours a month is still
+working 270 hours a month).
+
+If the model could see this column it would learn the flag in one split, score
+every benign person low for entirely the wrong reason, and the false-positive
+rate would become a measurement of the model reading a label we handed it. So it
+is generation-only, in the same way `latent_strain` is in
+`voice_loader.GENERATION_ONLY_COLUMNS`, and `tests/test_benign_profiles.py`
+asserts its absence from the feature matrix, the signal matrix and every
+processed payload.
 
 ### 1.2 `duty_logs.csv`
 
@@ -167,11 +189,72 @@ Documented in `backend/post_model_analytics/README.md`,
 `backend/near_miss/README.md`, `backend/models/README.md`, and
 `backend/api/store.py` (inline docstrings on `ProcessedStore`).
 
+`meta.json` additionally carries:
+
+| Key | What it is |
+|---|---|
+| `signal_medians` | Per-signal population median at this snapshot. The reference the counterfactual sweep substitutes in. Computed once here so no population statistic is recomputed per request, and so a case is never compared against a median from a different corpus. |
+| `counterfactual_reference` | What "typical" was taken to mean (`population_median`). |
+| `benign_profile_check` | The gray-area false-positive figures — see §4. |
+| `near_miss_closest_units` | Units ranked by how close they are to a near-miss, with the shortfall on each condition. Lets a zero-finding run be a statement with a number in it rather than a blank panel. |
+| `thresholds.risk_band_margin` | How close to a cutoff counts as "only just over the line" (`settings.RISK_BAND_MARGIN`). |
+| `thresholds.officer_queue_target_size` | The officer queue's working-capacity cap. |
+
+---
+
+## 4. Runtime stores (not written by the pipeline)
+
+Four SQLite files and one JSONL, each deliberately in its own file. They are
+separate because they sit at different trust boundaries, and putting two of them
+together would mean a compromise of one exposed the other.
+
+| Store | Path | Holds | Who reads it |
+|---|---|---|---|
+| Identity vault | `data/identity_map.sqlite3` | `pseudonym_id` → `personnel_id`, the HMAC salt, and the re-identification audit trail | **Nothing in the API.** Only `scripts/reidentify.py` and the pipeline's pseudonymisation stage. Not committed. |
+| Record-access log | `data/access_log.sqlite3` | Who (by role) opened which pseudonym's record, when, granted or refused | The individual, as counts and dates, in the Privacy Centre |
+| Intervention log | `data/intervention_log.sqlite3` | Which welfare action was taken on a case, its status, and a short note | The welfare officers who can already open the case |
+| Medical store | `data/medical_records.sqlite3` | Doctors, availability, appointments, one prescription note per visit | The person, their doctor, and the establishment admin — **never** a welfare officer or a commander |
+| Token denylist | `data/revoked_tokens.sqlite3` | Ended session ids and their expiry. No subject. | Nobody; consulted on every token verification |
+| Check-in answers | `data/responses/check_in_responses.jsonl` | A person's own self-assessment answers | Only the person who wrote them |
+
+**Why the medical store is separate is the load-bearing one.** It keys on the
+real `personnel_id`, because you cannot schedule a human being for a real
+appointment against a pseudonym nobody in the clinic can resolve. Nothing in it
+is ever joined against the identity vault or the analytics store, and the two
+domains use disjoint identifier namespaces (`PSN` + 16 hex versus `P` + 5
+digits) so that neither accepts the other's identifiers. See
+`backend/medical/README.md`.
+
+### `benign_profile_check` in `meta.json`
+
+| Key | Meaning |
+|---|---|
+| `benign_count`, `rest_count` | Group sizes |
+| `benign_high_rate`, `rest_high_rate` | Share classified High in each group |
+| `benign_officer_visible_rate`, `rest_officer_visible_rate` | Share reaching the officer queue |
+| `by_profile` | The same counts split by which benign profile |
+| `held_out` | The same rates over **only** the people the deployed model was never fitted on |
+| `dampening_factor`, `reading_note` | The assumption behind the group, and what the number does and does not establish |
+
+The `held_out` block exists because the obvious objection to a rate computed
+over all forty is "of course it got those right, it was trained on most of
+them". That objection is correct and cheaper to answer than to argue with. The
+held-out group is small — about a fifth of forty — so read the counts, not just
+the rates.
+
 ---
 
 ## 3. Processed Feature Matrix (`data/processed/` internal)
 
 The feature matrix produced by `backend/feature_engineering/` has
-4,800 rows (800 people × 6 snapshots) and 38 columns. The 10 model
-features used for training are documented in `settings.MODEL_FEATURE_NAMES`.
-All other columns are intermediate features used during signal construction.
+4,800 rows (800 people × 6 snapshots). The 11 model features used for training
+are documented in `settings.MODEL_FEATURE_NAMES` — the nine behavioral signals,
+the optional voice signal, and its presence flag. All other columns are
+intermediate features used during signal construction.
+
+Two columns from the raw corpus are **generation-only** and are asserted absent
+from this matrix by tests: `latent_strain` (in `voice_samples.csv`, stripped by
+`voice_loader.GENERATION_ONLY_COLUMNS`) and `benign_profile` (in
+`personnel.csv`, never listed in `hr_features.CONTEXT_COLUMNS`). Both are
+drivers the generator used; letting either reach the model would let it recover
+the answer instead of the pattern.

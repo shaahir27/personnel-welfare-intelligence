@@ -149,6 +149,13 @@ def build_personnel(rng: np.random.Generator, units: pd.DataFrame) -> pd.DataFra
           real-world counterpart; it stands in for the accumulated individual
           circumstances (family separation distance, incident exposure) that
           the PS names but that no dataset would expose directly.
+        - ``benign_profile`` marks the ~5% whose indicators look strained for a
+          documented, benign reason (an instructor, somebody on a long course,
+          a volunteer for a hard-area posting). It exists so the system's
+          false-positive behaviour can be *measured*. It is generation-only:
+          it shapes the event tables and dampens the label, and it must never
+          reach the feature matrix or the model, or the model would simply
+          learn the flag and the whole exercise would be worthless.
     """
     n = settings.N_PERSONNEL
 
@@ -223,6 +230,25 @@ def build_personnel(rng: np.random.Generator, units: pd.DataFrame) -> pd.DataFra
     # that is more likely in hard-area postings.
     family_separated = rng.random(n) < (0.35 + 0.35 * (posting_type_arr == "hard_area"))
 
+    # Gray-area profiles: people whose raw indicators look strained for a
+    # documented, benign reason. Assigned as an exact count rather than by a
+    # per-person coin flip, for the same reason the full-entitlement leave
+    # minority is -- a Bernoulli draw reproduces the stated fraction only in
+    # expectation, and the corpus should match the figure the docs quote.
+    #
+    # `voluntary_hard_area` only makes sense for somebody actually in a hard
+    # area, so it is reassigned when it lands on anybody else. That keeps the
+    # profile a description of a real circumstance instead of a label sitting
+    # on top of an unrelated posting.
+    n_benign = int(round(n * settings.BENIGN_PROFILE_FRACTION))
+    benign_profile = np.array([""] * n, dtype=object)
+    chosen = rng.choice(n, size=n_benign, replace=False)
+    for position in chosen:
+        profile = str(rng.choice(np.array(settings.BENIGN_PROFILE_NAMES)))
+        if profile == "voluntary_hard_area" and posting_type_arr[position] != "hard_area":
+            profile = "planned_surge"
+        benign_profile[position] = profile
+
     return pd.DataFrame(
         {
             "personnel_id": [f"P{ i + 1 :05d}" for i in range(n)],
@@ -240,6 +266,10 @@ def build_personnel(rng: np.random.Generator, units: pd.DataFrame) -> pd.DataFra
             "family_separated": family_separated,
             "unit_operational_tempo": np.round(tempo, 4),
             "exposure_propensity": np.round(exposure_propensity, 4),
+            # GENERATION ONLY. Never a feature, never a signal, never in an API
+            # payload. See settings.BENIGN_PROFILE_COLUMN and
+            # tests/test_benign_profiles.py.
+            "benign_profile": benign_profile,
         }
     )
 
@@ -315,7 +345,33 @@ def build_leave_records(
             base = rng.beta(4.0, 0.9) * (settings.LEAVE_ENTITLEMENT_DAYS_PER_YEAR - 3)
             # ASSUMPTION: high-tempo units suppress availment by up to 15%.
             annual_target = base * (1.0 - 0.15 * tempo)
-        annual_target = float(np.clip(annual_target, 0.0, settings.LEAVE_ENTITLEMENT_DAYS_PER_YEAR))
+
+        # Gray-area shaping. Leave availment is where two of the benign
+        # profiles differ most from someone who merely looks like them: an
+        # instructor can take leave when they ask for it, and somebody in the
+        # middle of a fixed-end surge cannot but knows when it stops.
+        # ASSUMPTIONS.
+        #
+        # The ceiling is the entitlement minus three, not the entitlement, and
+        # that matters: the branch above deliberately keeps non-full-entitlement
+        # people below the cap so this branch can never be mistaken for one of
+        # the explicitly-chosen 4.5% who avail the lot. Multiplying and then
+        # clipping at the entitlement itself pushed several people onto exactly
+        # 100 days and moved the generator's own full-entitlement self-check
+        # from 0.045 to 0.056 -- a sourced anchor quietly drifting because of a
+        # change that had nothing to do with it.
+        profile = str(person.get("benign_profile") or "")
+        if profile in ("training_cadre", "voluntary_hard_area"):
+            annual_target *= 1.25
+        elif profile == "planned_surge":
+            annual_target *= 0.75
+
+        ceiling = (
+            float(settings.LEAVE_ENTITLEMENT_DAYS_PER_YEAR)
+            if full_flags[position]
+            else float(settings.LEAVE_ENTITLEMENT_DAYS_PER_YEAR - 3)
+        )
+        annual_target = float(np.clip(annual_target, 0.0, ceiling))
 
         total_days = annual_target * years
         if total_days < 1.0:
@@ -364,6 +420,33 @@ def build_leave_records(
                     "leave_id": f"{person['personnel_id']}-L{spell_idx + 1:03d}",
                     "personnel_id": person["personnel_id"],
                     "leave_type": str(rng.choice(leave_types, p=leave_type_probs)),
+                    "start_date": start.date().isoformat(),
+                    "end_date": end.date().isoformat(),
+                    "days_availed": round(length, 1),
+                }
+            )
+
+        # `recent_return` is the one benign profile that is about *timing*
+        # rather than volume: the person has just come back from a long spell,
+        # so every trailing window shows a step change and the rate-of-change
+        # features read it as a spike. Nothing has deteriorated -- they simply
+        # were not there last month.
+        #
+        # It is added as an extra spell ending days before the reference date
+        # rather than by moving an existing one, because moving one would
+        # change the person's annual total and break the sourced ~75 days/year
+        # anchor for that person.
+        if profile == "recent_return":
+            # ASSUMPTION: a 20-30 day spell ending 3-15 days ago.
+            length = float(rng.uniform(20.0, 30.0))
+            ended_days_ago = float(rng.uniform(3.0, 15.0))
+            end = reference - timedelta(days=ended_days_ago)
+            start = end - timedelta(days=length)
+            rows.append(
+                {
+                    "leave_id": f"{person['personnel_id']}-LRR",
+                    "personnel_id": person["personnel_id"],
+                    "leave_type": "earned",
                     "start_date": start.date().isoformat(),
                     "end_date": end.date().isoformat(),
                     "days_availed": round(length, 1),
@@ -490,6 +573,37 @@ def build_duty_logs(rng: np.random.Generator, personnel: pd.DataFrame) -> pd.Dat
             else settings.OFFICER_HOLIDAY_AVAILMENT_FAILURE_RATE
         )
 
+        # Gray-area shaping. The point of a benign profile is that the raw
+        # indicators look bad while the *pattern underneath them* does not, so
+        # the shaping has to be specific rather than a blanket adjustment --
+        # otherwise the model would be shown a group that differs on nothing in
+        # particular, and the false-positive test would prove nothing.
+        #
+        # ASSUMPTIONS throughout. Each multiplier says what circumstance it is
+        # standing in for.
+        profile = str(person.get("benign_profile") or "")
+        sd_scale = 1.0
+        if profile == "training_cadre":
+            # Instructor: long days on a fixed timetable, and weekly offs are
+            # actually taken because the establishment runs to a schedule.
+            base_daily += 1.6
+            sd_scale = 0.35
+            fail_rate = min(fail_rate, 0.20)
+        elif profile == "planned_surge":
+            # Mid-exercise: genuinely heavy, genuinely predictable, with a
+            # rotation date already fixed.
+            base_daily += 1.2
+            sd_scale = 0.55
+        elif profile == "course_attendee":
+            # On a course: duty hours drop because they are not on the ground,
+            # and the trailing windows look erratic for that reason alone.
+            base_daily -= 2.0
+            sd_scale = 1.35
+        elif profile == "voluntary_hard_area":
+            # A hard posting they asked for. The hours are the posting's; the
+            # recovery is not suppressed the way an imposed one would be.
+            fail_rate = min(fail_rate, 0.45)
+
         # ASSUMPTION: a slow random walk so months are correlated in time.
         drift = 0.0
         for m in range(settings.HISTORY_MONTHS, 0, -1):
@@ -501,7 +615,9 @@ def build_duty_logs(rng: np.random.Generator, personnel: pd.DataFrame) -> pd.Dat
             # ASSUMPTION: 26-30 duty days a month; higher tempo = fewer offs.
             days_on_duty = int(np.clip(rng.normal(30.44 - 4.0 * (1.0 - tempo), 1.6), 20, 31))
             # ASSUMPTION: within-month SD of daily hours scales with tempo.
-            daily_sd = float(np.clip(rng.gamma(2.0, 0.55 + 1.1 * tempo), 0.2, 6.0))
+            daily_sd = float(
+                np.clip(rng.gamma(2.0, 0.55 + 1.1 * tempo) * sd_scale, 0.2, 6.0)
+            )
             total = daily * days_on_duty
 
             offs_entitled = 4  # ASSUMPTION: four weekly offs per month.
@@ -627,6 +743,11 @@ def build_training_records(
                 400.0,
             )
         )
+        # A course attendee's training hours are the whole point of the
+        # profile: the number is genuinely high and genuinely planned.
+        # ASSUMPTION: roughly triple the ordinary annual load.
+        if str(person.get("benign_profile") or "") == "course_attendee":
+            annual *= 3.0
         budget = annual * years
         k = 0
         while budget > 4.0:
@@ -736,6 +857,7 @@ def latent_welfare_risk(
     exposure_propensity: float,
     family_separated: bool,
     rng: np.random.Generator,
+    benign_profile: str = "",
 ) -> float:
     """Compute the synthetic ground-truth welfare-risk score for one snapshot.
 
@@ -764,6 +886,8 @@ def latent_welfare_risk(
         exposure_propensity: Person-level latent driver (0-1).
         family_separated: Whether the person is separated from family.
         rng: Seeded generator, for the irreducible-noise term.
+        benign_profile: A documented benign cause for the raw indicators, or
+            an empty string. Dampens the score -- see the note below.
 
     Returns:
         A welfare-risk score clipped to 0-100.
@@ -808,6 +932,22 @@ def latent_welfare_risk(
     saturating = 0.10 * np.sqrt(deployment * (1.0 + irregularity))
 
     raw = linear + interaction + saturating
+
+    # ASSUMPTION, and the largest single one in this function: a documented
+    # benign cause removes most, but not all, of the strain the raw indicators
+    # imply. A multiplier rather than a subtraction, so it cannot push anyone
+    # negative; and well short of zero, because an instructor working 270 hours
+    # a month is still working 270 hours a month and a label that said
+    # otherwise would be wrong in the more dangerous direction.
+    #
+    # This is what creates people who look strained and are not, which is what
+    # makes a false-positive rate measurable at all. Nothing the model can see
+    # distinguishes them -- `benign_profile` is generation-only -- so the model
+    # is genuinely being asked to get these cases wrong, and how often it does
+    # is the number reported in meta.json.
+    if benign_profile:
+        raw *= settings.BENIGN_LABEL_DAMPENING
+
     # ASSUMPTION: irreducible noise, so no model can reach R^2 = 1.0. This is
     # honest -- a dataset a model fits perfectly proves nothing.
     noisy = raw + float(rng.normal(0.0, 0.045))
@@ -928,6 +1068,7 @@ def build_ground_truth_labels(
                 exposure_propensity=float(person["exposure_propensity"]),
                 family_separated=bool(person["family_separated"]),
                 rng=rng,
+                benign_profile=str(person.get("benign_profile") or ""),
             )
             rows.append(
                 {

@@ -13,13 +13,15 @@ run and would silently delete them.
 
 Why a JSONL file rather than the database
 -----------------------------------------
-``backend/db/`` is an empty package in this build; the only SQLite in use is
-the pseudonym vault, which nothing in the analytics path may open. A one-line-
-per-submission file is the smallest thing that is honest about what it is: it
-appends, it never rewrites history, and a submission is durable the moment the
-line is flushed. When a real database layer lands, this module is the only
-thing that changes -- the route above it already speaks in terms of "record
-this submission" rather than in terms of files.
+``backend/db/`` holds the record-access log and nothing else; there is no
+general analytics database in this build, and the only other SQLite stores are
+the pseudonym vault and the medical booking store, neither of which anything in
+the analytics path may open. A one-line-per-submission file is the smallest
+thing that is honest about what it is: it appends, it never rewrites history,
+and a submission is durable the moment the line is flushed. When a real
+database layer lands, this module is the only thing that changes -- the route
+above it already speaks in terms of "record this submission" rather than in
+terms of files.
 
 What this deliberately does NOT do
 ----------------------------------
@@ -33,6 +35,7 @@ if answers changed the score, "optional" would not be true.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -60,16 +63,39 @@ class InvalidSubmission(ValueError):
     """Raised when a submitted check-in does not have a usable shape."""
 
 
+@dataclass(frozen=True)
+class Question:
+    """One entry in the fixed question bank.
+
+    Attributes:
+        question_id: The id an answer is stored against.
+        kind: ``"scale"`` or ``"free_text"``.
+        signal_name: The behavioral signal this question describes, or an
+            empty string when it describes nothing in particular. Read from
+            the bank's own ``by_signal`` grouping, or from an explicit
+            ``maps_to_signal`` key on a general question -- never inferred
+            from the wording.
+        reverse_scored: Whether a *higher* answer means *less* strain. Carried
+            because a comparison that ignored it would read every reassuring
+            answer as a worrying one.
+    """
+
+    question_id: str
+    kind: str
+    signal_name: str = ""
+    reverse_scored: bool = False
+
+
 @lru_cache(maxsize=1)
-def question_kinds(path: Path = QUESTIONS_PATH) -> Mapping[str, str]:
-    """Return every question id in the bank with the kind of answer it takes.
+def question_index(path: Path = QUESTIONS_PATH) -> Mapping[str, Question]:
+    """Return every question in the bank, keyed by id.
 
     Args:
         path: The question bank file.
 
     Returns:
-        Mapping of question id to ``"scale"`` or ``"free_text"``. Loaded once:
-        the bank is static between deployments.
+        Mapping of question id to :class:`Question`. Loaded once: the bank is
+        static between deployments.
 
     Why the store reads the bank:
         An answer is only meaningful against the question it answers. Storing
@@ -78,13 +104,36 @@ def question_kinds(path: Path = QUESTIONS_PATH) -> Mapping[str, str]:
         an answer to anything.
     """
     bank = json.loads(Path(path).read_text(encoding="utf-8"))
-    kinds: Dict[str, str] = {}
+    index: Dict[str, Question] = {}
+
+    def _add(question: Mapping[str, Any], signal_name: str) -> None:
+        index[str(question["id"])] = Question(
+            question_id=str(question["id"]),
+            kind=KIND_FREE_TEXT if question.get("free_text") else KIND_SCALE,
+            signal_name=str(question.get("maps_to_signal") or signal_name or ""),
+            reverse_scored=bool(question.get("reverse_scored")),
+        )
+
     for question in bank.get("general", []):
-        kinds[str(question["id"])] = KIND_FREE_TEXT if question.get("free_text") else KIND_SCALE
-    for questions in bank.get("by_signal", {}).values():
+        _add(question, "")
+    for signal_name, questions in bank.get("by_signal", {}).items():
         for question in questions:
-            kinds[str(question["id"])] = KIND_FREE_TEXT if question.get("free_text") else KIND_SCALE
-    return kinds
+            _add(question, signal_name)
+    return index
+
+
+@lru_cache(maxsize=1)
+def question_kinds(path: Path = QUESTIONS_PATH) -> Mapping[str, str]:
+    """Return every question id with the kind of answer it takes.
+
+    Args:
+        path: The question bank file.
+
+    Returns:
+        Mapping of question id to ``"scale"`` or ``"free_text"``. A view over
+        :func:`question_index`, kept because validation only needs the kind.
+    """
+    return {qid: question.kind for qid, question in question_index(path).items()}
 
 
 def _coerce_answer(raw: Any, kinds: Mapping[str, str]) -> Dict[str, Any]:

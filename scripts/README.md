@@ -8,11 +8,19 @@ get out of the way.
 | --- | --- |
 | `generate_synthetic_data.py` | Produce every raw tabular CSV. |
 | `generate_voice_audio.py` | Synthesise the WAVs behind the voice-sample index. |
-| `seed_db.py` | Build the SQLite databases and the pseudonymisation map from the raw CSVs, and populate demo user accounts. |
+| `train_models.py` | Train and compare all eight candidates on one person-disjoint split, calibrate the winner, register it. |
 | `run_pipeline.py` | Run ingestion → features → signals → scoring end to end and write processed outputs. |
+| `seed_medical_roster.py` | Populate the medical booking store with a doctor roster and a forward grid of open slots. |
+| `reidentify.py` | The audited path back from a pseudonym to a person. Not part of the served system. |
 
-Run them in that order. Each is idempotent — re-running overwrites its own
-outputs and touches nothing else.
+Run the first four in that order. `seed_medical_roster.py` is independent of
+all of them — it reads nothing from the analytics side, deliberately. Each is
+idempotent: re-running overwrites its own outputs and touches nothing else.
+
+> This table previously listed a `seed_db.py` that does not exist and omitted
+> `train_models.py`, which does. Both are corrected here; the pipeline creates
+> the identity vault on its own during pseudonymisation and there has never
+> been a separate seeding step for it.
 
 ---
 
@@ -41,6 +49,13 @@ the voluntary voice-sample index, and the synthetic ground-truth labels.
 | `training_records.csv` | one row per course attended | ~8,500 |
 | `voice_samples.csv` | one row per voluntary check-in | 100 |
 | `ground_truth_labels.csv` | one row per person-snapshot | 4,800 |
+
+`personnel.csv` carries a `benign_profile` column marking the gray-area group —
+about 5% of the roster whose raw indicators look strained for a documented
+benign reason. It is **generation-only**: it shapes the event tables and dampens
+the label, and it is stripped before feature engineering so the model cannot
+learn the flag instead of the pattern. `docs/data_dictionary.md` §1.1 explains
+why that matters, and `tests/test_benign_profiles.py` enforces it.
 
 ### How it fits into the pipeline
 
@@ -174,3 +189,74 @@ validated, and nothing in the served system treats the voice signal as a
 diagnosis — it is one optional input among several, always flagged as
 voluntary, and a person who never opts in is scored by exactly the same path
 as one whose sample is simply missing.
+
+
+---
+
+## `seed_medical_roster.py`
+
+### What it does
+
+Creates three doctors and a weekday grid of 15-minute appointment slots in
+`data/medical_records.sqlite3`, so the booking screens have something to book
+against on a fresh clone.
+
+```bash
+python scripts/seed_medical_roster.py --reset --days 14
+```
+
+### What it deliberately does not read
+
+Nothing from the analytics side. It does not open `data/processed/`, the
+identity vault or the model registry, and it imports nothing from the welfare
+codebase.
+
+That is worth stating because the natural way to write a seeder like this would
+be to put more clinics where the strain is — which would make the demo look
+responsive and would also mean the medical domain's shape was derived from
+welfare data, exactly the join the whole design exists to prevent. A flat
+weekday grid is the honest structure, and it matches the rule the booking
+routes enforce: appointments are offered in time order only, to everyone, at
+the same rate.
+
+---
+
+## `reidentify.py`
+
+### What it does
+
+Resolves one pseudonym back to a `personnel_id`, through the single audited
+path in `backend/preprocessing/pseudonymize.py`, with a stated purpose.
+
+```bash
+python scripts/reidentify.py --pseudonym PSNa1b2c3d4e5f60718 \
+    --officer WO-DEMO-01 \
+    --purpose "Welfare visit scheduled following High-band escalation"
+
+python scripts/reidentify.py --audit          # the trail, newest first
+```
+
+### Why it is a command and not an API route
+
+The whole system is built so no name, service number or raw `personnel_id`
+reaches the analytics layer, the models, the stored scores or any API response.
+An HTTP route returning a real identity would put identity and welfare data on
+the same wire, one authorisation bug away from each other — and this codebase
+has already found two authorisation bugs of exactly that shape.
+
+Re-identification is also not a screen action. It is what happens when an
+officer has decided to go and speak to someone: a deliberate, attributable,
+occasional act. A command that must be run with a stated purpose, by someone
+with shell access to the vault host, matches that shape. A button does not.
+
+### What the audit trail was before this
+
+The machinery was complete — `resolve()` checked the role, demanded a purpose,
+and wrote to `reidentification_audit` whether it granted or refused. But
+nothing in the running system ever called it, so the table had zero rows, and
+the project was describing an audited path it had never once exercised. **A
+control nobody has run is a claim, not a control.**
+
+Refusals are audited too. Pass `--role commander` to watch one happen: a run of
+refused attempts against one pseudonym is precisely what an audit trail exists
+to reveal, so it must not be the case that only successes leave a trace.

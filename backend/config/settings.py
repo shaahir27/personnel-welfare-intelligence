@@ -60,6 +60,24 @@ CHECKIN_RESPONSES_PATH: Final[Path] = RESPONSES_DATA_DIR / "check_in_responses.j
 # Covered by the *.sqlite3 rule in .gitignore.
 ACCESS_LOG_DB_PATH: Final[Path] = DATA_DIR / "access_log.sqlite3"
 
+# Revoked session tokens (backend/auth/token_revocation.py). Its own file: it
+# is operational state about sessions, not personal data about individuals, and
+# it must not be co-located with either the access log or the identity vault.
+TOKEN_REVOCATION_DB_PATH: Final[Path] = DATA_DIR / "revoked_tokens.sqlite3"
+
+# Which welfare action was taken on a case (backend/db/intervention_log.py).
+# Separate from the access log: one records that a record was *read*, the other
+# records that something was *done*, and merging them would make the access log
+# harder to read for its own purpose.
+INTERVENTION_LOG_DB_PATH: Final[Path] = DATA_DIR / "intervention_log.sqlite3"
+
+# The booking, appointment and prescription store (backend/medical/). Kept in
+# its own file for the same reason the identity vault is: medical
+# confidentiality is a stricter and separate boundary from welfare-risk
+# confidentiality, and nothing in the analytics, welfare or command path is
+# permitted to open this file. See backend/medical/README.md.
+MEDICAL_DB_PATH: Final[Path] = DATA_DIR / "medical_records.sqlite3"
+
 # ---------------------------------------------------------------------------
 # Reference date for the synthetic corpus
 # ---------------------------------------------------------------------------
@@ -149,6 +167,74 @@ JAWAN_RANKS: Final[Tuple[str, ...]] = (
     "Head Constable",
     "Assistant Sub-Inspector",
 )
+
+# ---------------------------------------------------------------------------
+# Gray-area (benign) profiles in the synthetic corpus
+# ---------------------------------------------------------------------------
+# People who look strained on every raw indicator for a documented, benign
+# reason. They exist so that "we minimise false positives" can be measured
+# instead of asserted.
+#
+# The problem they fix. Every high-indicator person in the corpus previously
+# had a genuinely high label, because the label is a formula over those same
+# indicators. So there was nobody who *looked* strained and was *fine*, which
+# means the mechanisms the project points at for PS technical challenge #3 --
+# the wide Moderate band, persistence gating, low-confidence suppression -- had
+# nothing in the data that could test them. A false-positive rate could not be
+# reported at all, only described.
+#
+# ASSUMPTION on every figure here. Real forces do contain instructors, course
+# attendees, volunteers and units mid-exercise; the proportion below is chosen,
+# not sourced.
+BENIGN_PROFILE_FRACTION: Final[float] = 0.05
+
+# Each profile says what the raw numbers look like and why the strain is not
+# what those numbers would ordinarily imply.
+BENIGN_PROFILES: Final[Dict[str, str]] = {
+    "training_cadre": (
+        "Instructor on a training establishment. Very high duty hours, but a "
+        "regular schedule, leave available when asked for, and a predictable "
+        "week."
+    ),
+    "course_attendee": (
+        "Away on a long course. High training hours and an irregular-looking "
+        "pattern, both temporary and both planned."
+    ),
+    "voluntary_hard_area": (
+        "Requested the hard-area posting and relocated their family with them. "
+        "Long tenure in a difficult location, chosen rather than imposed."
+    ),
+    "planned_surge": (
+        "Unit is mid-exercise with a rotation date already fixed. High duty "
+        "hours and low leave, with a known end."
+    ),
+    "recent_return": (
+        "Just back from a long leave spell, so every trailing window shows a "
+        "step change. The change is the return, not a deterioration."
+    ),
+}
+BENIGN_PROFILE_NAMES: Final[Tuple[str, ...]] = tuple(BENIGN_PROFILES)
+
+# How much of the strain the raw indicators imply is removed by having a
+# documented benign cause.
+#
+# ASSUMPTION, and a large one -- somebody will ask about this number, so it is
+# stated as a choice rather than dressed up. It is a multiplier rather than a
+# subtraction so it cannot push a score negative, and it is well short of zero
+# on purpose: an instructor working 270 hours a month is still working 270
+# hours a month, and a system that told them otherwise would be wrong in the
+# more dangerous direction.
+BENIGN_LABEL_DAMPENING: Final[float] = 0.55
+
+# The generator writes `benign_profile` onto the roster and NOTHING may carry it
+# forward. It is not in `hr_features.CONTEXT_COLUMNS`, not in
+# `behavioral_signals.CARRIED_CONTEXT`, and not a model feature. If it reached
+# the model, the model would simply learn the flag, every benign person would be
+# scored low for the wrong reason, and the false-positive figure would be
+# measuring nothing -- the same discipline `latent_strain` gets in
+# `voice_loader.GENERATION_ONLY_COLUMNS`. `tests/test_benign_profiles.py`
+# asserts its absence at every stage.
+BENIGN_PROFILE_COLUMN: Final[str] = "benign_profile"
 
 # ---------------------------------------------------------------------------
 # Feature engineering windows
@@ -450,6 +536,36 @@ RISK_BAND_HIGH_MIN: Final[float] = 65.0
 
 RISK_LEVELS: Final[Tuple[str, ...]] = ("Normal", "Moderate", "High")
 
+# How close to a band cutoff counts as "only just over the line". A case at
+# 66.2 against a High cutoff of 65 is a different statement from one at 84, and
+# an officer who is not told the difference will read them the same way.
+#
+# ASSUMPTION: 3 points. Deliberately much narrower than the calibrated interval
+# half-width (about 10 points at 90% coverage), because the two say different
+# things and should not collapse into one flag. `is_borderline` says the
+# *measurement* cannot settle the band. `barely_over_cutoff` says the *point
+# estimate itself* is sitting on the line. A case can be either without being
+# the other. See docs/model_comparison_report.md section 5a.
+RISK_BAND_MARGIN: Final[float] = 3.0
+
+# ---------------------------------------------------------------------------
+# Counterfactuals (backend/post_model_analytics/counterfactual.py)
+# ---------------------------------------------------------------------------
+# For each signal in turn, the case is re-scored with that one signal set to
+# the population median and the drop is reported. It answers "what would move
+# this score", where SHAP answers "what built this score" -- genuinely
+# different questions once the model is non-linear, and labelled separately
+# wherever both appear.
+#
+# ASSUMPTION: the population median is the reference for "typical". A mean
+# would be pulled by the tail of a skewed signal, and the median is the value
+# an officer can actually name ("half the force is below this").
+COUNTERFACTUAL_REFERENCE: Final[str] = "population_median"
+# Below this drop, a signal's counterfactual is not worth listing: it is inside
+# the noise of a model whose calibrated interval is ten points wide, and a list
+# of nine near-zero rows reads as if the system found nine things. ASSUMPTION.
+COUNTERFACTUAL_MIN_REDUCTION: Final[float] = 0.5
+
 # ---------------------------------------------------------------------------
 # Trend engine (backend/post_model_analytics/trend_engine.py)
 # ---------------------------------------------------------------------------
@@ -480,6 +596,32 @@ TREND_PERSISTENCE_SNAPSHOTS: Final[int] = 3
 # own result, and still receives their own notification.
 ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING: Final[bool] = True
 
+# How many cases the officer queue shows before the rest are held behind an
+# explicit "show every eligible case" action.
+#
+# ASSUMPTION: one welfare officer can hold a working caseload of roughly this
+# many people at a time. There is no published CAPF figure for a welfare
+# officer's caseload; 60 is chosen as a number a person could actually work
+# through in a reporting cycle, and it is stated on screen rather than applied
+# silently.
+#
+# The ethics of this are the part worth reading. Capping a welfare queue means
+# somebody genuinely at risk sits below the fold, and that is a real cost which
+# must not be hidden. So: the cap prioritises, it does not filter. The response
+# always carries `total_eligible` alongside `visible_count`, the rule is stated
+# in the payload, `?all=1` returns every eligible case with no cap at all, and
+# nobody's own score, notification or self-view changes because of where they
+# landed in an officer's ordering. The honest phrasing is "prioritised, with
+# the remainder one click away" -- never "filtered".
+#
+# Order of operations, recorded because it was measured: the escalation rule
+# was tightened first (see the flag above, 619 -> 159 of 800) and the cap was
+# only added after that, because tightening a rule that was admitting 77% of
+# the force is a better fix than capping the list it produces. On the current
+# corpus the cap is close to non-binding, which is the state it should be in:
+# a cap that is doing heavy lifting means the rule above it is still wrong.
+OFFICER_QUEUE_TARGET_SIZE: Final[int] = 60
+
 # ---------------------------------------------------------------------------
 # Confidence engine (backend/post_model_analytics/confidence_engine.py)
 # ---------------------------------------------------------------------------
@@ -497,6 +639,35 @@ CONFIDENCE_RECENCY_ZERO_DAYS: Final[int] = 180      # ASSUMPTION.
 CONFIDENCE_BAND_MEDIUM_MIN: Final[float] = 0.50     # ASSUMPTION.
 CONFIDENCE_BAND_HIGH_MIN: Final[float] = 0.75       # ASSUMPTION.
 CONFIDENCE_LEVELS: Final[Tuple[str, ...]] = ("Low", "Medium", "High")
+
+# ---------------------------------------------------------------------------
+# Self-report consistency (backend/post_model_analytics/self_report_consistency.py)
+# ---------------------------------------------------------------------------
+# The check-in question bank tags every question to a behavioral signal, so an
+# answer can be put beside what the duty and leave records independently show
+# for that same signal. The comparison is an annotation and nothing else: it is
+# never an input to the model, never moves a score, and never becomes a
+# "how honest is this person" number.
+#
+# The answer scale has five points (0-4), so one step is worth 25 points on the
+# 0-100 signal scale. ASSUMPTION: a divergence has to exceed one full step
+# before it is called a divergence, otherwise the system would be reporting the
+# granularity of its own scale as a finding. 30 leaves a little margin above
+# that floor.
+SELF_REPORT_ANSWER_SCALE_MAX: Final[int] = 4
+SELF_REPORT_DIVERGENCE_POINTS: Final[float] = 30.0
+
+# Ordered so that index 0 is the reassuring case and the two divergences are
+# named for what the *self-report* did relative to the record, never for what
+# the person did.
+SELF_REPORT_ALIGNED: Final[str] = "aligned"
+SELF_REPORT_BELOW_RECORD: Final[str] = "self_report_below_record"
+SELF_REPORT_ABOVE_RECORD: Final[str] = "self_report_above_record"
+SELF_REPORT_CLASSIFICATIONS: Final[Tuple[str, ...]] = (
+    SELF_REPORT_ALIGNED,
+    SELF_REPORT_BELOW_RECORD,
+    SELF_REPORT_ABOVE_RECORD,
+)
 
 # ---------------------------------------------------------------------------
 # Individual vs systemic analysis
@@ -688,7 +859,43 @@ JWT_EXPIRY_MINUTES: Final[int] = 60
 ROLE_PERSONNEL: Final[str] = "personnel"
 ROLE_WELFARE_OFFICER: Final[str] = "welfare_officer"
 ROLE_COMMANDER: Final[str] = "commander"
-ROLES: Final[Tuple[str, ...]] = (ROLE_PERSONNEL, ROLE_WELFARE_OFFICER, ROLE_COMMANDER)
+
+# The medical booking domain (backend/medical/) introduces two more roles. They
+# are deliberately NOT welfare roles and hold no welfare permission of any kind:
+# a medical officer cannot open a case, and an establishment admin cannot read
+# an appointment. Medical confidentiality is a stricter and separate boundary
+# from welfare-risk confidentiality, so the roles that cross it are separate
+# too. See backend/medical/README.md.
+ROLE_MEDICAL_OFFICER: Final[str] = "medical_officer"
+ROLE_ESTABLISHMENT_ADMIN: Final[str] = "establishment_admin"
+
+ROLES: Final[Tuple[str, ...]] = (
+    ROLE_PERSONNEL,
+    ROLE_WELFARE_OFFICER,
+    ROLE_COMMANDER,
+    ROLE_MEDICAL_OFFICER,
+    ROLE_ESTABLISHMENT_ADMIN,
+)
+
+# The three roles that may touch welfare risk data. Every welfare route names
+# the roles it accepts explicitly, so this tuple is a statement for readers and
+# tests rather than a gate -- but it is the statement that makes "a medical
+# officer has no welfare permission" checkable rather than merely intended.
+WELFARE_ROLES: Final[Tuple[str, ...]] = (
+    ROLE_PERSONNEL,
+    ROLE_WELFARE_OFFICER,
+    ROLE_COMMANDER,
+)
+
+# The roles that may touch the booking and prescription domain. `personnel`
+# appears in both tuples because it is the same human being in both places --
+# the person is the one party entitled to their own data on either side of the
+# boundary. Nothing else appears in both.
+MEDICAL_ROLES: Final[Tuple[str, ...]] = (
+    ROLE_PERSONNEL,
+    ROLE_MEDICAL_OFFICER,
+    ROLE_ESTABLISHMENT_ADMIN,
+)
 
 # Field-level allow-lists enforced server-side in backend/auth/rbac.py. The
 # commander list is the security-critical one: it contains no field that can
@@ -710,6 +917,21 @@ COMMANDER_FORBIDDEN_FIELDS: Final[Tuple[str, ...]] = (
     # system. The signal derived from it is unit-aggregable; the raw field is
     # not, and must not travel with a payload by accident.
     "family_separated",
+    # What somebody said about themselves on a voluntary check-in, and how it
+    # compared with their duty record, is the single most chilling thing this
+    # system could show upwards -- a person who learns their answers travel to
+    # a commander stops answering honestly, and the self-assessment becomes
+    # worse than useless. Listed here so the guard refuses it structurally
+    # rather than relying on no commander handler ever building it.
+    "self_report_consistency",
+    "self_reported_strain",
+    # The booking and prescription domain is a stricter boundary than welfare
+    # risk. No welfare or command role has any access to it (see
+    # backend/medical/README.md); these entries make an accidental join
+    # impossible to serve rather than merely unlikely.
+    "appointment_id",
+    "prescription_id",
+    "doctor_id",
 )
 
 # ---------------------------------------------------------------------------
@@ -726,6 +948,11 @@ RETENTION_HR_FEATURES_DAYS: Final[int] = 730
 # at. ASSUMPTION: kept for one year, long enough for an oversight review of the
 # preceding reporting cycle, and purged by the pipeline after that.
 RETENTION_ACCESS_LOG_DAYS: Final[int] = 365
+# What welfare support was offered and arranged is the record that says the
+# organisation responded. ASSUMPTION: kept as long as the risk scores it
+# relates to, so a case and the actions taken on it expire together rather than
+# leaving actions attached to a score nobody can look up any more.
+RETENTION_INTERVENTION_LOG_DAYS: Final[int] = RETENTION_RISK_SCORES_DAYS
 
 # ---------------------------------------------------------------------------
 # API

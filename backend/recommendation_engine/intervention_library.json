@@ -5,9 +5,19 @@
       "id": "schedule_leave",
       "title": "Schedule Earned Leave",
       "description": "Coordinate with the reporting officer to schedule earned leave within the next 30 days. Ensure leave is not cancelled or curtailed except in a declared operational emergency.",
-      "applicable_signals": ["leave_deficit_signal", "recovery_pattern_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Individual", "Mixed", "Systemic"],
+      "applicable_signals": [
+        "leave_deficit_signal",
+        "recovery_pattern_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed",
+        "Systemic"
+      ],
       "priority": 1,
       "recipient": "welfare_officer",
       "action_owner": "reporting_officer"
@@ -16,9 +26,19 @@
       "id": "workload_review",
       "title": "Duty Roster Review",
       "description": "Request a duty roster review with the unit commander to bring average monthly duty hours within the 208-hour (48 h/week) statutory standard. Document any operational justification for the deviation.",
-      "applicable_signals": ["workload_deviation_signal", "schedule_irregularity_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Individual", "Mixed", "Systemic"],
+      "applicable_signals": [
+        "workload_deviation_signal",
+        "schedule_irregularity_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed",
+        "Systemic"
+      ],
       "priority": 1,
       "recipient": "welfare_officer",
       "action_owner": "unit_commander"
@@ -27,9 +47,19 @@
       "id": "counseling_referral",
       "title": "Welfare Officer Contact",
       "description": "Welfare officer to make direct, private contact to offer support. This is a welfare visit, not an inquiry. No record of the contact is to be placed in any service file or performance assessment.",
-      "applicable_signals": ["workload_deviation_signal", "recovery_pattern_signal", "deployment_stability_signal", "leave_deficit_signal"],
-      "applicable_risk_levels": ["High"],
-      "applicable_attribution": ["Individual", "Mixed"],
+      "applicable_signals": [
+        "workload_deviation_signal",
+        "recovery_pattern_signal",
+        "deployment_stability_signal",
+        "leave_deficit_signal"
+      ],
+      "applicable_risk_levels": [
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed"
+      ],
       "priority": 2,
       "recipient": "welfare_officer",
       "action_owner": "welfare_officer"
@@ -38,9 +68,18 @@
       "id": "posting_rotation_flag",
       "title": "Flag for Rotation Board",
       "description": "Flag for inclusion in the next tenure-based rotation review. Current posting duration has exceeded or is approaching the policy target. No rotation guarantee is implied; this is a flag for the board's attention.",
-      "applicable_signals": ["posting_hardship_signal", "deployment_stability_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Individual", "Mixed"],
+      "applicable_signals": [
+        "posting_hardship_signal",
+        "deployment_stability_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed"
+      ],
       "priority": 2,
       "recipient": "welfare_officer",
       "action_owner": "establishment_branch"
@@ -49,9 +88,17 @@
       "id": "transfer_frequency_review",
       "title": "Review Transfer Frequency",
       "description": "Request administrative review of recent transfer orders. Frequent transfers within a short period are a recognised welfare stressor; the review should assess whether the pattern is operationally necessary.",
-      "applicable_signals": ["transfer_churn_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Individual", "Mixed"],
+      "applicable_signals": [
+        "transfer_churn_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed"
+      ],
       "priority": 3,
       "recipient": "welfare_officer",
       "action_owner": "establishment_branch"
@@ -60,9 +107,17 @@
       "id": "training_schedule_review",
       "title": "Review Concurrent Training Load",
       "description": "Review whether current mandatory training commitments are stacked on top of full operational duty hours. Coordinate with the training wing to defer non-urgent training modules.",
-      "applicable_signals": ["training_load_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Individual", "Mixed"],
+      "applicable_signals": [
+        "training_load_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed"
+      ],
       "priority": 3,
       "recipient": "welfare_officer",
       "action_owner": "training_officer"
@@ -71,9 +126,19 @@
       "id": "peer_support_referral",
       "title": "Unit Peer Support Group",
       "description": "Refer to the unit-level peer support group. This intervention is unit-facing, not individual-facing, and is appropriate when strain is systemic across the unit rather than individual. No individual name is disclosed to the peer group.",
-      "applicable_signals": ["workload_deviation_signal", "recovery_pattern_signal", "schedule_irregularity_signal"],
-      "applicable_risk_levels": ["Moderate", "High"],
-      "applicable_attribution": ["Systemic", "Mixed"],
+      "applicable_signals": [
+        "workload_deviation_signal",
+        "recovery_pattern_signal",
+        "schedule_irregularity_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Systemic",
+        "Mixed"
+      ],
       "priority": 3,
       "recipient": "welfare_officer",
       "action_owner": "peer_support_coordinator"
@@ -82,11 +147,61 @@
       "id": "commander_escalation",
       "title": "Escalate to Commanding Officer",
       "description": "Escalate to the commanding officer for systemic welfare review. This is a unit-level escalation, not an individual-level one. The commanding officer receives aggregate unit findings only, consistent with their data-access scope.",
-      "applicable_signals": ["workload_deviation_signal", "deployment_stability_signal", "posting_hardship_signal"],
-      "applicable_risk_levels": ["High"],
-      "applicable_attribution": ["Systemic"],
+      "applicable_signals": [
+        "workload_deviation_signal",
+        "deployment_stability_signal",
+        "posting_hardship_signal"
+      ],
+      "applicable_risk_levels": [
+        "High"
+      ],
+      "applicable_attribution": [
+        "Systemic"
+      ],
       "priority": 1,
       "recipient": "commander",
+      "action_owner": "welfare_officer"
+    },
+    {
+      "id": "family_contact_support",
+      "title": "Family Contact and Visit Support",
+      "description": "Unit welfare staff to confirm the person has working means of contact with family (line availability, call timings compatible with their duty roster) and to advise on family accommodation, family visit facilitation and the family welfare schemes they are entitled to. Separation from family is a posting circumstance, not a personal difficulty, and this action is about removing practical obstacles to contact.",
+      "applicable_signals": [
+        "family_separation_signal",
+        "deployment_stability_signal"
+      ],
+      "applicable_risk_levels": [
+        "Moderate",
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Systemic",
+        "Mixed"
+      ],
+      "priority": 2,
+      "recipient": "welfare_officer",
+      "action_owner": "unit_welfare_staff"
+    },
+    {
+      "id": "medical_referral",
+      "title": "Offer a Unit Medical Appointment",
+      "description": "Welfare officer to tell the person that a unit medical appointment can be booked at any time through their own app, and to help with the booking if they want that. Sustained duty load with little recovery has physical effects -- sleep, blood pressure, musculoskeletal strain -- that a welfare conversation is not the right instrument for. Booking is open to everyone regardless of indicator level, the doctor does not see the welfare score, and sharing any welfare context with the doctor is the person's own choice at the point of booking.",
+      "applicable_signals": [
+        "workload_deviation_signal",
+        "recovery_pattern_signal",
+        "schedule_irregularity_signal",
+        "posting_hardship_signal"
+      ],
+      "applicable_risk_levels": [
+        "High"
+      ],
+      "applicable_attribution": [
+        "Individual",
+        "Mixed"
+      ],
+      "priority": 3,
+      "recipient": "welfare_officer",
       "action_owner": "welfare_officer"
     }
   ]

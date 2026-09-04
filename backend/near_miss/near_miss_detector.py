@@ -47,7 +47,7 @@ Every threshold is an ASSUMPTION, recorded as such in ``config/settings.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -301,11 +301,86 @@ def near_miss_pressure(
                 ),
             ]
         )
+        # How far each condition is from its threshold, signed so that a
+        # positive number always means "over the line". A unit sitting 0.3
+        # points short on one condition and clear on the other two is a
+        # materially different report from one that is nowhere near, and the
+        # crossed count alone cannot tell them apart.
         out[unit_id] = {
             "mean_demand": round(condition.mean_demand, 1),
             "mean_recovery_deficit": round(condition.mean_recovery_deficit, 1),
             "staffing_ratio": round(float(condition.staffing_ratio), 3),
             "thresholds_crossed": int(crossed),
             "personnel_count": condition.personnel_count,
+            "margins": {
+                "demand": round(
+                    condition.mean_demand - settings.NEAR_MISS_DEMAND_SIGNAL_MIN, 1
+                ),
+                "recovery_deficit": round(
+                    condition.mean_recovery_deficit - settings.NEAR_MISS_RECOVERY_SIGNAL_MIN,
+                    1,
+                ),
+                "staffing": (
+                    round(settings.NEAR_MISS_STAFFING_RATIO_MAX - float(condition.staffing_ratio), 3)
+                    if np.isfinite(condition.staffing_ratio)
+                    else None
+                ),
+            },
         }
     return out
+
+
+def closest_units(
+    pressure: Mapping[str, Mapping[str, Any]], limit: int = 3
+) -> List[Dict[str, Any]]:
+    """Rank units by how close they are to being a near-miss.
+
+    Args:
+        pressure: Output of :func:`near_miss_pressure`.
+        limit: How many to return.
+
+    Returns:
+        Units ordered by conditions crossed, then by how small their worst
+        shortfall is. Each entry names the condition holding it back and by how
+        much.
+
+    Why this exists:
+        The detector requires three conditions at once, on thresholds set
+        against a distribution whose ceiling the corpus's own leave anchor
+        determines. That makes the three-way intersection genuinely marginal:
+        which unit clears all three is close to a coin toss between the top
+        few, and a run can return zero findings while a unit sits a third of a
+        point short on one condition.
+
+        A blank list would read as "nothing to see" and would be wrong. This
+        turns a zero-finding run into a statement with a number in it -- "no
+        confirmed near-miss; U016 is two of three and short by 0.3 on
+        recovery" -- which is both more honest and more useful than the binary
+        flag, and it means nobody is tempted to move a threshold to make the
+        screen look populated.
+    """
+    ranked = []
+    for unit_id, entry in pressure.items():
+        margins = dict(entry.get("margins") or {})
+        shortfalls = {
+            name: value for name, value in margins.items() if value is not None and value < 0
+        }
+        worst = min(shortfalls.items(), key=lambda kv: kv[1]) if shortfalls else None
+        ranked.append(
+            {
+                "unit_id": unit_id,
+                "thresholds_crossed": entry.get("thresholds_crossed", 0),
+                "personnel_count": entry.get("personnel_count"),
+                "shortfall_condition": worst[0] if worst else None,
+                "shortfall_amount": abs(worst[1]) if worst else None,
+                "margins": margins,
+            }
+        )
+
+    ranked.sort(
+        key=lambda row: (
+            -int(row["thresholds_crossed"]),
+            row["shortfall_amount"] if row["shortfall_amount"] is not None else 0.0,
+        )
+    )
+    return ranked[:limit]

@@ -13,6 +13,8 @@ responsibly.
 | `confidence_engine.py` | How much data the score rests on. |
 | `individual_vs_systemic.py` | Is this the person, or their unit? |
 | `escalation.py` | The one definition of "may a welfare officer see this case". |
+| `counterfactual.py` | For each signal in turn: what would this score be if that one condition were typical? |
+| `self_report_consistency.py` | What a person said about themselves, set beside what the duty record independently shows. |
 
 ## Inputs and outputs
 
@@ -31,6 +33,9 @@ responsibly.
 | `confidence_engine.compute_confidence_frame(df)` | frame + `confidence`, `confidence_level` |
 | `individual_vs_systemic.compute_unit_aggregates(df)` | `{unit_id: UnitAggregate}` — commander-safe, no individual fields |
 | `individual_vs_systemic.classify_attribution(score, unit)` | `AttributionResult` — Individual / Systemic / Mixed |
+| `counterfactual.sweep(...)` | `CounterfactualSweep` — per-signal projected score, reduction, and whether that one change alone leaves the High band |
+| `counterfactual.population_medians(rows)` | `{signal: median}` — the reference, computed once in the pipeline and written to `meta.json` |
+| `self_report_consistency.compare(...)` | `ConsistencyReport` — with two serialisations: `to_personal_dict()` carries the numbers, `to_officer_dict()` structurally cannot |
 
 ## Pipeline position
 
@@ -182,6 +187,95 @@ rather than the unit silently vanishing.
 `UnitAggregate` contains no individual identifier, no individual score and no
 field from which one could be derived. That is a property of the dataclass, not
 of the template that renders it.
+
+### Counterfactuals answer a different question from SHAP, and they can disagree
+
+This is the part officers notice, so it is worth being precise about.
+
+| | Question | Answer shape |
+| --- | --- | --- |
+| SHAP (`models/explainability_shap.py`) | What **built** this score? | Contributions that sum exactly to the score |
+| Counterfactual (`counterfactual.py`) | What would **change** this score? | Per-signal projected score if that one signal were typical |
+
+With a non-linear model these genuinely differ. Gradient boosting can attribute
+a large share of a score to a signal whose counterfactual is small — the model
+has already saturated on it, so moving it buys nothing — and the reverse. The
+two lists are therefore rendered as separate panels with their own headings and
+are never merged into one "top factors" block. Neither is the corrected version
+of the other.
+
+**It is model sensitivity, not causality.** "Bringing duty hours to typical
+would move this case from 71 to 58" does not mean granting leave will make the
+person fine; it means the model responds that way to that input. The response
+carries the same `is_illustrative` flag and *the same disclaimer wording* the
+what-if simulator already uses — deliberately the same words, because two
+differently-softened disclaimers invite a reader to decide which one is the
+serious one. A test asserts the strings match.
+
+A signal that is *below* the median reports a **negative** reduction rather than
+being clipped or dropped. Normalising a condition that is already better than
+typical would raise the score, and hiding that would let an officer read the
+list as "nine things that would help".
+
+### Two different statements about a cutoff
+
+`is_borderline` and `barely_over_cutoff` are separate flags and must stay
+separate:
+
+- **`is_borderline`** — the *calibrated range* crosses a band cutoff. The
+  measurement cannot settle which band this is.
+- **`barely_over_cutoff`** — the *point estimate* is within
+  `settings.RISK_BAND_MARGIN` (3.0) of the cutoff that admitted its band. The
+  number itself is sitting on the line.
+
+A case can be either without being the other: a score five points clear of the
+cutoff with a ten-point interval is borderline but not barely-over; a score one
+point over, measured tightly, is barely-over but not borderline. Collapsing
+them would lose the distinction between "we are unsure" and "it is close",
+which are different things to tell an officer.
+
+### Self-report consistency is an annotation and can never be anything else
+
+The check-in bank tags every question to a behavioral signal. That pairing
+existed and was unused — answers were stored and nothing read them.
+
+Reading it matters for one specific reason: in a uniformed-forces culture,
+saying you are struggling carries a real social cost, so the people under the
+most strain are statistically the **most** likely to answer "fine". A system
+that leans partly on self-report and cannot notice that pattern will
+systematically miss exactly the people it exists to catch. That is PS technical
+challenge #2 producing PS technical challenge #3.
+
+The three outcomes are named for what the *self-report* did relative to the
+*record*, never for what the person did — `self_report_below_record`, not
+"under-reported". There is no honesty score here and there must never be one: a
+divergence is not evidence of anything on its own. The duty extract may be
+stale; the person may genuinely cope differently from the numbers.
+
+**The rule that keeps it safe: it does not touch the model, the score or the
+band.** That is load-bearing, not decorative. If answering honestly could raise
+your visible score, people learn within one cycle to answer "fine" every time,
+the self-assessment stops carrying information, and the data gets *worse* than
+having none. The "answering is entirely optional and does not affect your score"
+line on the check-in screen has to stay true for the feature to work at all, and
+`tests/test_self_report_consistency.py` asserts the module imports nothing from
+the model layer.
+
+**Who sees what**, and why the report has two serialisations rather than one
+filtered at the call site:
+
+| | Sees |
+| --- | --- |
+| The individual | Their own comparison in full, numbers included, in supportive wording |
+| Welfare officer | One line naming which signals diverged — no answers, no numbers, no question ids — and only on a case the escalation rule already made visible |
+| Commander | Nothing. `self_report_consistency` and `self_reported_strain` are in `settings.COMMANDER_FORBIDDEN_FIELDS`, so the guard refuses a payload carrying either at any depth |
+
+`to_officer_dict()` cannot leak a number because it never puts one in. Filtering
+at the call site would be one forgotten call away from leaking.
+
+The divergence threshold is `settings.SELF_REPORT_DIVERGENCE_POINTS` (30). One
+step on the five-point answer scale is worth 25 points, so a smaller threshold
+would report the granularity of the instrument as a finding.
 
 ## Assumptions
 

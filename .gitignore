@@ -21,3 +21,16 @@ data/responses/
 # Agent/AI tooling skill packs. Vendored third-party content, not product code
 # and not ours to redistribute. Kept locally, out of the repo.
 .agents/
+
+# Ignore Visual Studio Code workspace settings
+.vscode/
+
+# Generated rating sheets and their analysis. Regenerable from any pipeline run
+# with validation/build_rating_profiles.py. The CSV deliberately carries the
+# model's own answer in a `model_score` column, which must be deleted before a
+# rater ever sees the sheet -- a copy sitting in the repo is a copy that can be
+# handed over by accident, and a rater who has seen the score is no longer an
+# independent judgement.
+validation/rating_profiles.csv
+validation/rating_profiles.md
+validation/human_rating_results.json

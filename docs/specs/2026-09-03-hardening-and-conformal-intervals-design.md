@@ -1,9 +1,16 @@
 # pwiews — hardening pass and calibrated risk intervals
 
 **Date:** 2026-09-03
-**Status:** implemented in this session (no push). Written so the decisions
-can be reviewed after the fact; every numbered item below maps to a commit-able
-change in the tree.
+**Status:** implemented. Written so the decisions can be reviewed after the
+fact; every numbered item below maps to a change in the tree.
+
+> **This is a point-in-time record, not a current reference.** Every number in
+> it is the number as at 2026-09-03. The corpus has since gained the gray-area
+> group, which lowered every formula-recovery metric on purpose and widened the
+> conformal interval — see `docs/model_comparison_report.md` §5 and §5b. The
+> *design decisions* recorded here still hold; the *figures* do not. Quote them
+> from the model comparison report, which is the single source of truth for
+> what any metric here is measured against.
 
 ---
 

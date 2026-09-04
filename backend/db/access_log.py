@@ -16,8 +16,8 @@ What is recorded
     at             UTC timestamp
     actor_role     the role that asked (welfare_officer, personnel, ...)
     actor_subject  the token subject -- a service id or a pseudonym
-    action         view_case, what_if, view_summary, view_history,
-                   view_notifications
+    action         view_case, counterfactual, what_if, view_summary,
+                   view_history, view_notifications, record_intervention
     pseudonym_id   whose record
     outcome        granted or refused
 
@@ -63,7 +63,9 @@ OUTCOME_REFUSED = "refused"
 OUTCOMES = (OUTCOME_GRANTED, OUTCOME_REFUSED)
 
 ACTION_VIEW_CASE = "view_case"
+ACTION_COUNTERFACTUAL = "counterfactual"
 ACTION_WHAT_IF = "what_if"
+ACTION_RECORD_INTERVENTION = "record_intervention"
 ACTION_VIEW_SUMMARY = "view_summary"
 ACTION_VIEW_HISTORY = "view_history"
 ACTION_VIEW_NOTIFICATIONS = "view_notifications"

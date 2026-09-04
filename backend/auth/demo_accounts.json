@@ -1,5 +1,5 @@
 {
-  "_about": "Demo accounts for POST /api/auth/login. Passwords are PBKDF2-HMAC-SHA256, 200000 iterations, unique 16-byte salt per account. The plaintext passwords are published in README.md because this build guards a synthetic corpus and a judge needs to be able to sign in. Replace this file with a real directory service before any deployment; backend/auth/credentials.py is the only module that reads it.",
+  "_about": "Demo accounts for POST /api/auth/login. Passwords are PBKDF2-HMAC-SHA256, 200000 iterations, unique 16-byte salt per account. The plaintext passwords are published in README.md because this build guards a synthetic corpus and a judge needs to be able to sign in. Replace this file with a real directory service before any deployment; backend/auth/credentials.py is the only module that reads it. The 'doctor' and 'establishment' accounts belong to the medical booking domain and hold no welfare permission of any kind -- see backend/medical/README.md.",
   "accounts": {
     "officer": {
       "role": "welfare_officer",
@@ -21,6 +21,20 @@
       "may_choose_subject": true,
       "salt": "8b7d148c683b22f683975265488d668f",
       "password_hash": "8128ebc4cd88e40c0fe20f0bf37fc85cf6aeb62fd82809621ab7b754d5efd6ae"
+    },
+    "doctor": {
+      "role": "medical_officer",
+      "subject": "MO-DEMO-01",
+      "may_choose_subject": false,
+      "salt": "0a30eb1cfe234acc97ce98d5d095ff8d",
+      "password_hash": "6c9fd2311cdfbb699436c18d9e1c3ffe28a5394912f7c6f3e65bd747831f9601"
+    },
+    "establishment": {
+      "role": "establishment_admin",
+      "subject": "EST-DEMO-01",
+      "may_choose_subject": false,
+      "salt": "73aa56b7402ee7cd95cca2c535e2c777",
+      "password_hash": "25d2c808d0594e89ad7d9edd73fc6704efce98ee7019d5b58370bf8b9cabe194"
     }
   }
 }

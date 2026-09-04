@@ -43,6 +43,7 @@ from backend.models import predict  # noqa: E402
 from backend.near_miss import near_miss_detector  # noqa: E402
 from backend.post_model_analytics import (  # noqa: E402
     confidence_engine,
+    counterfactual,
     escalation,
     individual_vs_systemic,
     risk_classifier,
@@ -78,6 +79,213 @@ def _write(path: Path, payload: object) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return path
+
+
+def _held_out_people(signals: pd.DataFrame) -> set:
+    """Return the pseudonyms of people the deployed model was never fitted on.
+
+    Args:
+        signals: The signal frame, in the row order the trainer builds it in.
+
+    Returns:
+        The held-out pseudonyms, or an empty set if the split cannot be
+        reconstructed. An empty set degrades the held-out figures to "not
+        available" rather than silently reporting the full-population rate
+        under a held-out label, which would be the worse failure.
+
+    Note:
+        Uses ``train.person_codes`` and ``train.make_split`` -- the same
+        functions and the same seed the trainer used, keyed on roster position
+        rather than the pseudonym string. Keying on the string would give a
+        different partition on every fresh clone, because the pseudonym depends
+        on the uncommitted vault salt; that defect has been fixed once already
+        and must not be reintroduced here.
+    """
+    try:
+        from backend.models import train
+    except ImportError:  # pragma: no cover - defensive
+        return set()
+
+    if signals is None or signals.empty:
+        return set()
+    groups = signals[train.ID_COLUMN] if train.ID_COLUMN in signals.columns else None
+    if groups is None:
+        return set()
+
+    # The same GroupShuffleSplit, on the same person codes, with the same seed
+    # -- reproduced here rather than calling make_split, because SplitData
+    # returns arrays and deliberately does not carry the identifiers back out.
+    from sklearn.model_selection import GroupShuffleSplit
+
+    codes = train.person_codes(groups)
+    splitter = GroupShuffleSplit(
+        n_splits=1,
+        test_size=settings.TRAIN_TEST_SPLIT_RATIO,
+        random_state=settings.RANDOM_SEED,
+    )
+    _, test_index = next(splitter.split(signals, signals.index, groups=codes))
+    return {str(v) for v in pd.Series(groups).iloc[test_index].unique()}
+
+
+def benign_profile_check(
+    cases: List[Dict[str, object]],
+    personnel: pd.DataFrame,
+    signals: pd.DataFrame,
+) -> Dict[str, object]:
+    """Measure how the system treats people who look strained but are not.
+
+    Args:
+        cases: The assembled case list at the latest snapshot.
+        personnel: The pseudonymised roster, which still carries
+            ``benign_profile`` -- the column is stripped before feature
+            engineering, not before this.
+        signals: The signal frame, in the row order the trainer saw, so the
+            same person-disjoint split can be reconstructed and the rate
+            reported separately for people the model was never fitted on.
+
+    Returns:
+        A summary carrying, for the gray-area group and for everybody else,
+        how many were classified High and how many reached the officer queue --
+        overall, and again restricted to the held-out people.
+
+    Why this number is the point of the gray-area profiles:
+        The system's answer to PS technical challenge #3 has always been a set
+        of real mechanisms -- a wide Moderate band, persistence gating,
+        low-confidence suppression -- and no measurement, because the corpus
+        contained nobody who looked strained and was fine. Every high-indicator
+        person had a high label, because the label is a formula over those same
+        indicators.
+
+        The gray-area group breaks that. Their raw duty, leave and posting
+        numbers look like a case; their label does not, because a documented
+        benign cause dampens it; and nothing the model can see tells them
+        apart, since ``benign_profile`` never reaches the feature matrix. So
+        the rate at which they are classified High is a false-positive rate the
+        system can actually report.
+
+        Read it with its limits attached. It is measured against the synthetic
+        label like every other figure here, and the dampening factor that
+        creates the group is an explicit assumption
+        (``settings.BENIGN_LABEL_DAMPENING``). What it establishes is that the
+        mechanism has been exercised against cases built to defeat it, which is
+        more than the description on its own establishes.
+
+    Why the held-out figure is reported separately:
+        Most of the gray-area group was in the model's training set, and the
+        obvious objection to a headline rate over all of them is "of course it
+        got those right, it was fitted on them". That objection is correct and
+        it is cheaper to answer than to argue with, so the same rates are
+        recomputed over only the people the deployed model never saw. The
+        held-out group is small -- about a fifth of forty -- so it is a weak
+        estimate and the count is reported next to the rate rather than the
+        rate alone.
+    """
+    column = settings.BENIGN_PROFILE_COLUMN
+    if column not in personnel.columns:
+        return {
+            "available": False,
+            "reason": (
+                f"the roster carries no '{column}' column; re-run "
+                f"scripts/generate_synthetic_data.py to build the gray-area group"
+            ),
+        }
+
+    # An unset profile is an empty CSV cell, which pandas reads as NaN -- and
+    # `nan or ""` is nan, because a float NaN is truthy. Written the obvious
+    # way, every one of the 800 people came back as gray-area and the whole
+    # comparison silently measured nothing against nothing.
+    profile_by_pseudonym = {
+        str(row["pseudonym_id"]): ("" if pd.isna(row[column]) else str(row[column]).strip())
+        for _, row in personnel.iterrows()
+    }
+    high = settings.RISK_LEVELS[2]
+
+    # Reconstruct the trainer's person-disjoint split, so the same rates can be
+    # reported over people the deployed model was never fitted on. Keyed the
+    # same way train.py keys it -- on roster position, not the pseudonym
+    # string, which depends on the uncommitted vault salt.
+    held_out = _held_out_people(signals)
+
+    groups: Dict[str, Dict[str, int]] = {
+        "benign": {"n": 0, "high": 0, "officer_visible": 0},
+        "rest": {"n": 0, "high": 0, "officer_visible": 0},
+        "benign_held_out": {"n": 0, "high": 0, "officer_visible": 0},
+        "rest_held_out": {"n": 0, "high": 0, "officer_visible": 0},
+    }
+    by_profile: Dict[str, Dict[str, int]] = {}
+
+    for case in cases:
+        pseudonym = str(case["pseudonym_id"])
+        profile = profile_by_pseudonym.get(pseudonym, "")
+        is_high = case["risk"]["level"] == high
+        visible = bool(case["is_officer_visible"])
+
+        for key in (
+            "benign" if profile else "rest",
+            *(("benign_held_out" if profile else "rest_held_out",) if pseudonym in held_out else ()),
+        ):
+            groups[key]["n"] += 1
+            groups[key]["high"] += int(is_high)
+            groups[key]["officer_visible"] += int(visible)
+
+        if profile:
+            entry = by_profile.setdefault(
+                profile, {"n": 0, "high": 0, "officer_visible": 0}
+            )
+            entry["n"] += 1
+            entry["high"] += int(is_high)
+            entry["officer_visible"] += int(visible)
+
+    def _rate(bucket: Dict[str, int], key: str) -> float | None:
+        return round(bucket[key] / bucket["n"], 4) if bucket["n"] else None
+
+    return {
+        "available": True,
+        "definition": (
+            "Personnel whose raw duty, leave and posting indicators look "
+            "strained for a documented benign reason (instructor, course "
+            "attendee, volunteer for a hard-area posting, unit mid-exercise "
+            "with a fixed rotation date, or just back from long leave). "
+            "Nothing the model sees identifies them."
+        ),
+        "dampening_factor": settings.BENIGN_LABEL_DAMPENING,
+        "benign_count": groups["benign"]["n"],
+        "benign_high_count": groups["benign"]["high"],
+        "benign_high_rate": _rate(groups["benign"], "high"),
+        "benign_officer_visible_count": groups["benign"]["officer_visible"],
+        "benign_officer_visible_rate": _rate(groups["benign"], "officer_visible"),
+        "rest_count": groups["rest"]["n"],
+        "rest_high_rate": _rate(groups["rest"], "high"),
+        "rest_officer_visible_rate": _rate(groups["rest"], "officer_visible"),
+        "held_out": {
+            "note": (
+                "The same rates over only the people the deployed model was "
+                "never fitted on. Most of the gray-area group is in the "
+                "training set, so the headline rate above is open to 'of course "
+                "it got those right'. This is the answer to that. The group is "
+                "small, so read the counts, not just the rates."
+            ),
+            "benign_count": groups["benign_held_out"]["n"],
+            "benign_high_count": groups["benign_held_out"]["high"],
+            "benign_high_rate": _rate(groups["benign_held_out"], "high"),
+            "benign_officer_visible_rate": _rate(
+                groups["benign_held_out"], "officer_visible"
+            ),
+            "rest_count": groups["rest_held_out"]["n"],
+            "rest_high_rate": _rate(groups["rest_held_out"], "high"),
+            "rest_officer_visible_rate": _rate(
+                groups["rest_held_out"], "officer_visible"
+            ),
+        },
+        "by_profile": by_profile,
+        "reading_note": (
+            "Measured against the synthetic label, like every other figure in "
+            "this file, and the group exists because of an explicit assumption "
+            "(settings.BENIGN_LABEL_DAMPENING). It shows the false-positive "
+            "mechanisms have been exercised against cases built to defeat "
+            "them. See docs/model_comparison_report.md section 5."
+        ),
+    }
 
 
 def main() -> int:
@@ -119,7 +327,18 @@ def main() -> int:
         scored, output.raw_tables["unit_capacity"]
     )
     pressure = near_miss_detector.near_miss_pressure(conditions)
+    closest = near_miss_detector.closest_units(pressure)
     print(f"     {len(aggregates)} units, {len(near_misses)} near-miss finding(s)")
+    if not near_misses and closest:
+        head = closest[0]
+        print(
+            f"     closest: {head['unit_id']} at {head['thresholds_crossed']} of 3"
+            + (
+                f", short by {head['shortfall_amount']} on {head['shortfall_condition']}"
+                if head["shortfall_condition"]
+                else ""
+            )
+        )
 
     latest_date = scored["snapshot_date"].max()
     latest = scored[scored["snapshot_date"] == latest_date].copy()
@@ -202,6 +421,20 @@ def main() -> int:
         entry["is_near_miss"] = unit_id in near_miss_units
         units_payload.append(entry)
 
+    # The counterfactual reference. Computed once here, over the same latest
+    # snapshot the cases were built from, and written into meta.json alongside
+    # thresholds. The API reads it from the store rather than recomputing a
+    # population statistic per request -- and reading it from the same run that
+    # produced the scores is what stops a case being compared against a median
+    # from a different corpus.
+    signal_medians = counterfactual.population_medians(
+        [case["signals"] for case in cases]
+    )
+
+    benign_check = benign_profile_check(
+        cases, output.pseudonymised["personnel"], output.signals
+    )
+
     band_counts = risk_classifier.band_distribution(latest)
     certainty_counts = {
         level: sum(1 for c in cases if c["risk"].get("band_certainty") == level)
@@ -228,10 +461,16 @@ def main() -> int:
         "thresholds": {
             "risk_moderate_min": settings.RISK_BAND_MODERATE_MIN,
             "risk_high_min": settings.RISK_BAND_HIGH_MIN,
+            "risk_band_margin": settings.RISK_BAND_MARGIN,
             "min_unit_size_for_aggregate": settings.MIN_UNIT_SIZE_FOR_AGGREGATE,
+            "officer_queue_target_size": settings.OFFICER_QUEUE_TARGET_SIZE,
         },
         "band_distribution": band_counts,
         "band_certainty": certainty_counts,
+        "near_miss_closest_units": closest,
+        "signal_medians": {k: round(v, 2) for k, v in signal_medians.items()},
+        "counterfactual_reference": settings.COUNTERFACTUAL_REFERENCE,
+        "benign_profile_check": benign_check,
         "officer_visible_count": officer_visible_count,
         "escalation_rule": escalation.visibility_rule_text(),
         "conformal": scorer.metadata.conformal,
@@ -267,6 +506,28 @@ def main() -> int:
 
     print(f"\nBand distribution at {pd.Timestamp(latest_date).date()}: {band_counts}")
     print(f"Band certainty: {certainty_counts}; officer-visible: {officer_visible_count} of {len(cases)}")
+    if benign_check.get("available") and benign_check.get("benign_count"):
+        def _pct(value: float | None) -> str:
+            """Format a rate, or say plainly that the group was empty."""
+            return "n/a" if value is None else f"{value:.1%}"
+
+        print(
+            f"Gray-area check: {benign_check['benign_high_count']} of "
+            f"{benign_check['benign_count']} benign-profile personnel classified "
+            f"High ({_pct(benign_check['benign_high_rate'])}), against "
+            f"{_pct(benign_check['rest_high_rate'])} across the rest; "
+            f"{_pct(benign_check['benign_officer_visible_rate'])} reached the "
+            f"officer queue against {_pct(benign_check['rest_officer_visible_rate'])}."
+        )
+        held = benign_check.get("held_out") or {}
+        if held.get("benign_count"):
+            print(
+                f"     held out only: {held['benign_high_count']} of "
+                f"{held['benign_count']} benign classified High "
+                f"({_pct(held['benign_high_rate'])}), against "
+                f"{_pct(held['rest_high_rate'])} across the rest of the held-out "
+                f"{held['rest_count']}."
+            )
     if near_misses:
         print("\nNear-miss findings:")
         for finding in near_misses:

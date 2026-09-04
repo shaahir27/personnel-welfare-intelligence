@@ -1,13 +1,1 @@
-[
-  {
-    "unit_id": "U016",
-    "first_detected": "2026-08-02",
-    "last_detected": "2026-09-01",
-    "consecutive_snapshots": 2,
-    "mean_demand": 57.9,
-    "mean_recovery_deficit": 35.6,
-    "staffing_ratio": 0.729,
-    "personnel_count": 44,
-    "summary": "Unit U016 has held high duty demand (mean workload signal 58), limited recovery (mean recovery signal 36) and staffing at 73% of sanctioned strength for 2 consecutive snapshots. No individual is named in this finding: it describes the unit's operating conditions and points to a roster, tasking or establishment review."
-  }
-]
+[]

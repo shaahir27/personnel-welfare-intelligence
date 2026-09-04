@@ -46,16 +46,36 @@ memorise the person's baseline rather than learning to generalise.
 
 | Model | MAE | RMSE | R² | Band accuracy | High recall |
 |---|---|---|---|---|---|
-| **Gradient Boosting (selected)** | **4.51** | **5.76** | **0.821** | 0.805 | 0.707 |
-| Histogram Gradient Boosting Regressor | 4.60 | 5.86 | 0.815 | 0.809 | 0.723 |
-| Multi-Layer Perceptron Regressor | 4.73 | 6.01 | 0.806 | 0.796 | 0.717 |
-| Lasso Regression (L1, CV-selected alpha) | 4.86 | 6.09 | 0.800 | 0.796 | 0.675 |
-| Linear Regression (OLS) | 4.86 | 6.09 | 0.800 | 0.796 | 0.681 |
-| Ridge Regression (L2, CV-selected alpha) | 4.86 | 6.09 | 0.800 | 0.796 | 0.675 |
-| Support Vector Regression (RBF kernel) | 4.80 | 6.19 | 0.794 | 0.808 | 0.733 |
-| Random Forest Regressor | 5.02 | 6.27 | 0.788 | 0.782 | 0.586 |
+| **Gradient Boosting (selected)** | **5.49** | **7.44** | **0.760** | 0.798 | 0.646 |
+| Multi-Layer Perceptron Regressor | 5.59 | 7.45 | 0.760 | 0.785 | 0.652 |
+| Lasso Regression (L1, CV-selected alpha) | 5.73 | 7.57 | 0.752 | 0.796 | 0.662 |
+| Ridge Regression (L2, CV-selected alpha) | 5.73 | 7.57 | 0.752 | 0.796 | 0.662 |
+| Linear Regression (OLS) | 5.73 | 7.57 | 0.752 | 0.796 | 0.667 |
+| Support Vector Regression (RBF kernel) | 5.69 | 7.69 | 0.744 | 0.790 | 0.682 |
+| Histogram Gradient Boosting Regressor | 5.70 | 7.71 | 0.743 | 0.786 | 0.646 |
+| Random Forest Regressor | 5.96 | 7.93 | 0.727 | 0.766 | 0.540 |
 
 Full per-fold results: `ml/evaluation/model_comparison_results.json`
+
+### Why these numbers are lower than the previous build's, and why that is correct
+
+An earlier build of this table reported R² = 0.821 for the selected model. The
+current corpus contains a **gray-area group** — about 5% of personnel whose raw
+indicators look strained for a documented benign reason, and whose label is
+dampened accordingly (`settings.BENIGN_LABEL_DAMPENING`). Nothing the model can
+see identifies them: `benign_profile` is generation-only and is asserted absent
+from the feature matrix.
+
+So the corpus now contains forty people whose label genuinely **cannot** be
+recovered from their features. R² is a formula-recovery metric, and it fell
+because there is now a part of the formula that the features do not carry.
+
+**That drop is the measurement, not a regression.** A model that still scored
+0.82 after the gray-area group was added would be telling us the group was
+trivially separable — which would mean the false-positive test below was
+measuring nothing. The right way to read the pair of numbers is: 0.06 of
+formula recovery was traded for the ability to report a false-positive rate at
+all.
 
 **Metric definitions:**
 - **MAE**: Mean absolute error in risk-score points (0–100 scale)
@@ -83,14 +103,20 @@ rather than a post-hoc judgement. The reason:
 - Neural networks and SVR produce feature attributions only via approximations
   (permutation importance, LIME) that are neither exact nor locally accurate.
 
-Gradient Boosting had the highest R² of any candidate (0.821). The best
-non-tree candidate, the MLP Regressor, reached R² = 0.806 — within the 0.02
-margin — so the tree-preference rule selected Gradient Boosting and the
-exact, fast SHAP path that comes with it.
+On the current corpus the rule did real work rather than rubber-stamping a
+winner. Gradient Boosting and the MLP Regressor are separated by 0.0004 of R² —
+the MLP is fractionally *ahead* on the raw figure and behind on MAE. That is
+well inside the 0.02 margin, so the tree-preference rule selected Gradient
+Boosting and the exact, fast SHAP path that comes with it.
+
+This is exactly the case the rule exists for: a difference small enough that
+picking by R² alone would be picking by noise, resolved by a criterion written
+down in advance rather than by a judgement made after seeing the table. Anybody
+can predict what would have to be true for a different model to win.
 
 ---
 
-## 5. What R² = 0.821 does and does not establish
+## 5. What R² = 0.760 does and does not establish
 
 **It does not establish that this system predicts welfare risk.** The target
 (`welfare_risk_score`) is produced by `latent_welfare_risk()` in
@@ -105,10 +131,17 @@ and the size of the shortfall is itself the interesting number:
 
 | Component of the label's variance | Share |
 |---|---|
-| Injected noise (σ = 4.5 points) | 10.6% |
-| `exposure_propensity`, a latent driver with no HR feature of its own | 1.0% |
-| **Ceiling for any model given what it can see** | **≈ 0.883** |
-| Achieved | 0.821 |
+| Injected noise (σ = 4.5 points) | ~10% |
+| `exposure_propensity`, a latent driver with no HR feature of its own | ~1% |
+| The gray-area group's label dampening, invisible to the features by design | see below |
+| Achieved | 0.760 |
+
+The third row is new and it is deliberate. Forty people carry a label reduced by
+`BENIGN_LABEL_DAMPENING` for a reason no feature encodes, so their residual is
+irreducible for any model that only sees the features. That is the *point* of
+the group; the alternative is a corpus in which every high-indicator person
+genuinely has a high label, which is a corpus that cannot test a false-positive
+mechanism at all.
 
 `exposure_propensity` is often described as "excluded from the features". That
 is not quite true and the difference matters. No *HR* feature encodes it, but
@@ -120,11 +153,10 @@ that the voice channel *adds* predictive value on this corpus is circular in
 exactly the way the HR side is. Breaking that circle is what the separate
 voice-lab exists to do; it cannot be broken with synthetic audio.
 
-The model sits 0.062 below the ceiling rather than on it. That gap is
-information the behavioral-signal layer gives up on purpose — saturating
-transforms, weighted blends, and monthly-grain duty pro-rated into week-scale
-windows — which is the price paid for a nine-term explanation an officer can
-read instead of a 38-column one they cannot.
+The remaining gap is information the behavioral-signal layer gives up on
+purpose — saturating transforms, weighted blends, and monthly-grain duty
+pro-rated into week-scale windows — which is the price paid for a nine-term
+explanation an officer can read instead of a 38-column one they cannot.
 
 Administrative records also have quality limits that no model removes:
 - Leave records reflect *approved* leave, not *availed* leave in some HRMS implementations.
@@ -148,6 +180,63 @@ the uncommitted identity vault, so every clone partitioned the people
 differently from the same seed. The split now keys on each person's position
 in the roster (`train.person_codes`), which the raw data fixes, and the table
 above is what any machine gets. The comparison is otherwise unchanged.
+
+---
+
+## 5b. The one number here that is about false positives
+
+Every other figure in this report measures how closely the model reproduces the
+generator's formula. This one measures something the mechanisms are supposed to
+do, against cases built to defeat them.
+
+**The group.** ~5% of the roster (40 of 800) are *gray-area* cases: an
+instructor on very high but regular hours with leave available; someone on a
+long course; a volunteer for a hard-area posting who relocated their family; a
+unit mid-exercise with a fixed rotation date; someone just back from long leave
+so every trailing window shows a step change. Their generated behaviour is
+shaped to match, and their label is multiplied by 0.55.
+
+**Nothing the model sees identifies them.** `benign_profile` is generation-only.
+It is not in `hr_features.CONTEXT_COLUMNS`, not in
+`behavioral_signals.CARRIED_CONTEXT`, and not a model feature;
+`tests/test_benign_profiles.py` asserts its absence from the feature matrix, the
+signal matrix and every processed payload, and separately asserts that no signal
+correlates with the flag closely enough to act as a proxy for it.
+
+**The result** (current corpus, `meta.json` → `benign_profile_check`):
+
+| | Gray-area | Everybody else |
+|---|---|---|
+| Population | 40 | 760 |
+| Classified **High** | **0 (0.0%)** | 123 (16.2%) |
+| Reached the officer queue | 1 (2.5%) | 141 (18.6%) |
+
+**And the version that answers the obvious objection.** Most of that group was
+in the training set, so "of course it got those right" is a fair thing to say.
+Restricted to the 160 people the deployed model was never fitted on:
+
+| | Gray-area, held out | Everybody else, held out |
+|---|---|---|
+| Population | 8 | 152 |
+| Classified **High** | **0 (0.0%)** | 31 (20.4%) |
+
+**Read this honestly, because eight is a small number.** Against a 20.4% base
+rate, the expected count for eight people treated like anybody else is about
+1.6, and observing zero has a probability of roughly 0.17 under that null. So
+this is *consistent* with the system handling gray-area cases correctly and is
+**not** statistically strong evidence on its own. What it does establish is that
+the mechanism has been exercised against cases constructed to defeat it, which
+is more than a description of the mechanism establishes — and that the corpus
+now contains the kind of case a false-positive claim needs.
+
+**Two limits stated in advance**, because both will be asked:
+
+1. The 0.55 dampening factor is an assumption, not a measurement. It is written
+   as `settings.BENIGN_LABEL_DAMPENING` with an `ASSUMPTION:` comment, and a
+   different factor would move this table.
+2. Like every other number here, it is measured against the synthetic label. It
+   says the system does not flag people the *generator* considers fine. Whether
+   those people are fine is a question only field data answers.
 
 ---
 
@@ -177,10 +266,25 @@ or the error distribution.
 |---|---|
 | Target coverage | 90% |
 | Quantile rank | 693 of 768 |
-| **Interval half-width** | **±9.89 points** |
-| Empirical coverage on the 160 unseen test people | **91.5%** |
-| Deployed model on test: MAE / RMSE / R² | 4.55 / 5.78 / 0.820 |
-| Deployed model on test: band accuracy / High recall / High precision | 0.800 / 0.686 / 0.799 |
+| **Interval half-width** | **±12.77 points** |
+| Empirical coverage on the 160 unseen test people | **92.4%** |
+| Deployed model on test: MAE / RMSE / R² | 5.57 / 7.53 / 0.754 |
+| Deployed model on test: band accuracy / High recall / High precision | 0.790 / 0.667 / 0.754 |
+
+The interval widened from ±9.89 to ±12.77 when the gray-area group was added,
+and for the same reason R² fell: the residuals on those forty people are large
+by construction, and a conformal quantile taken over all residuals reflects
+that. **A calibrated interval that did not widen would be the worrying
+outcome** — it would mean the calibration set contained no case the model
+genuinely cannot recover, which is precisely the case a welfare system needs
+its uncertainty statement to cover.
+
+One consequence is worth stating rather than leaving for someone to notice: a
+wider interval crosses band cutoffs more often, so far more cases are now marked
+`borderline` (747 of 800, against 599 before). That is not a degradation of the
+flag; it is the flag being honest about a model whose error bars are genuinely
+wider. If almost every Moderate case straddles a cutoff, the truthful thing to
+show an officer is exactly that.
 
 The deployed model gives up a fifth of the training people and loses nothing
 measurable for it on this corpus. The verified coverage sits just above the
@@ -233,11 +337,15 @@ absolute Shapley values, labelled using `settings.SIGNAL_HUMAN_LABELS`
    real-world figures (MHA, JPC) but not real personnel records. Performance
    on real HRMS data may differ.
 
-2. **Officer queue calibration.** The escalation rule now requires a
-   persistent Moderate case to also be Rising before it is shown to an
-   officer (`settings.ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING`). On the
-   previous corpus that took the queue from 619 to 175 of 800; the current
-   figure is in `meta.json` as `officer_visible_count`. The band cutoffs
+2. **Officer queue calibration.** The escalation rule requires a persistent
+   Moderate case to also be Rising before it is shown to an officer
+   (`settings.ESCALATE_PERSISTENT_MODERATE_ONLY_IF_RISING`). On the corpus
+   where it was introduced that took the queue from 619 to 159 of 800; the
+   current figure is in `meta.json` as `officer_visible_count`. A separate
+   working-capacity cap (`settings.OFFICER_QUEUE_TARGET_SIZE`) then decides how
+   many of those are shown first — a statement about an officer's caseload, not
+   about any person, and one the queue response reports alongside
+   `total_eligible` rather than applying silently. The band cutoffs
    themselves are unchanged and remain assumptions to be set against real
    establishment data.
 

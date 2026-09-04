@@ -1,4 +1,6 @@
 {
+  "label_provenance": "Metrics are measured against the synthetic label 'synthetic_welfare_risk_score', produced by latent_welfare_risk() in scripts/generate_synthetic_data.py. They quantify how closely the model reproduces that generator formula, not predictive validity against real welfare outcomes, which would require field labels this build does not have. See docs/model_comparison_report.md section 5.",
+  "training_label": "synthetic_welfare_risk_score",
   "split": {
     "train_rows": 3840,
     "test_rows": 960,
@@ -7,7 +9,7 @@
     "grouped_by": "pseudonym_id"
   },
   "selected_model": "gradient_boosting",
-  "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0156 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
+  "selection_reason": "Gradient Boosting Regressor selected. The best non-tree candidate (Multi-Layer Perceptron Regressor) was ahead by only -0.0004 R-squared, inside the 0.02 margin, so the exact-SHAP-explainable model is preferred -- explainability is a stated requirement and the accuracy difference does not pay for losing it.",
   "deployed": {
     "fit_rows": 3072,
     "fit_people": 512,
@@ -16,23 +18,23 @@
     "conformal": {
       "method": "split-conformal-absolute-residual",
       "coverage": 0.9,
-      "half_width": 9.8879,
+      "half_width": 12.769,
       "calibration_rows": 768,
       "calibration_people": 128,
       "quantile_rank": 693,
       "verified_on_test_rows": 960,
       "verified_on_test_people": 160,
-      "empirical_test_coverage": 0.9146,
+      "empirical_test_coverage": 0.924,
       "note": "Coverage is with respect to the label the model was trained on. On the synthetic corpus that label is the generator's formula plus injected noise; the interval quantifies model error against that label and is not validation against real welfare outcomes."
     },
     "test_metrics": {
-      "mae": 4.5496,
-      "rmse": 5.7811,
-      "r2": 0.8201,
-      "band_accuracy": 0.8,
-      "high_recall": 0.6859,
-      "high_precision": 0.7988,
-      "escalation_recall": 0.9609
+      "mae": 5.5699,
+      "rmse": 7.5302,
+      "r2": 0.7542,
+      "band_accuracy": 0.7896,
+      "high_recall": 0.6667,
+      "high_precision": 0.7543,
+      "escalation_recall": 0.9519
     }
   },
   "candidates": [
@@ -42,17 +44,17 @@
       "is_tree_based": false,
       "scales_inputs": true,
       "rationale": "Baseline. Establishes whether the signal-to-risk relationship is even roughly linear, and therefore whether any non-linear model in this comparison is earning its added complexity.",
-      "train_seconds": 0.002,
+      "train_seconds": 0.01,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.8609,
-        "rmse": 6.0888,
-        "r2": 0.8004,
+        "mae": 5.7262,
+        "rmse": 7.5661,
+        "r2": 0.7518,
         "band_accuracy": 0.7958,
-        "high_recall": 0.6806,
-        "high_precision": 0.7514,
-        "escalation_recall": 0.9622
+        "high_recall": 0.6667,
+        "high_precision": 0.8199,
+        "escalation_recall": 0.9519
       }
     },
     {
@@ -61,17 +63,17 @@
       "is_tree_based": false,
       "scales_inputs": true,
       "rationale": "Regularised linear variant. The behavioral signals are correlated by construction, which destabilises OLS coefficients; ridge is the standard remedy and is nearly free to include.",
-      "train_seconds": 0.007,
+      "train_seconds": 0.016,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.8607,
-        "rmse": 6.0885,
-        "r2": 0.8004,
+        "mae": 5.725,
+        "rmse": 7.566,
+        "r2": 0.7518,
         "band_accuracy": 0.7958,
-        "high_recall": 0.6754,
-        "high_precision": 0.7544,
-        "escalation_recall": 0.9622
+        "high_recall": 0.6616,
+        "high_precision": 0.8239,
+        "escalation_recall": 0.9519
       }
     },
     {
@@ -80,17 +82,17 @@
       "is_tree_based": false,
       "scales_inputs": true,
       "rationale": "Sparse linear variant. Zeroing a coefficient outright answers whether every behavioral signal is actually needed -- useful regardless of which model wins, since each signal has a data-collection cost.",
-      "train_seconds": 0.021,
+      "train_seconds": 0.05,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.8601,
-        "rmse": 6.0877,
-        "r2": 0.8005,
+        "mae": 5.7252,
+        "rmse": 7.5658,
+        "r2": 0.7519,
         "band_accuracy": 0.7958,
-        "high_recall": 0.6754,
-        "high_precision": 0.7544,
-        "escalation_recall": 0.9622
+        "high_recall": 0.6616,
+        "high_precision": 0.8239,
+        "escalation_recall": 0.9519
       }
     },
     {
@@ -99,17 +101,17 @@
       "is_tree_based": true,
       "scales_inputs": false,
       "rationale": "Bagged trees. Captures signal interactions without being told about them, which suits an interactive phenomenon, and supports an exact tree-based SHAP explanation.",
-      "train_seconds": 0.542,
+      "train_seconds": 0.61,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 5.0155,
-        "rmse": 6.2733,
-        "r2": 0.7881,
-        "band_accuracy": 0.7823,
-        "high_recall": 0.5864,
-        "high_precision": 0.7724,
-        "escalation_recall": 0.9674
+        "mae": 5.9565,
+        "rmse": 7.9316,
+        "r2": 0.7273,
+        "band_accuracy": 0.7656,
+        "high_recall": 0.5404,
+        "high_precision": 0.7868,
+        "escalation_recall": 0.9464
       }
     },
     {
@@ -118,17 +120,17 @@
       "is_tree_based": true,
       "scales_inputs": false,
       "rationale": "Sequentially boosted trees, usually the strongest family on tabular data of this shape, and tree-based so explainability costs nothing.",
-      "train_seconds": 1.638,
+      "train_seconds": 3.133,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.5093,
-        "rmse": 5.7597,
-        "r2": 0.8214,
-        "band_accuracy": 0.8052,
-        "high_recall": 0.7068,
-        "high_precision": 0.7941,
-        "escalation_recall": 0.9583
+        "mae": 5.4921,
+        "rmse": 7.4407,
+        "r2": 0.76,
+        "band_accuracy": 0.7979,
+        "high_recall": 0.6465,
+        "high_precision": 0.7853,
+        "escalation_recall": 0.9547
       }
     },
     {
@@ -137,17 +139,17 @@
       "is_tree_based": true,
       "scales_inputs": false,
       "rationale": "Histogram-binned boosting -- scikit-learn's equivalent of the LightGBM family, which is not installable here. Keeps that algorithm family in the comparison, and handles NaN natively.",
-      "train_seconds": 1.334,
+      "train_seconds": 2.409,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.6045,
-        "rmse": 5.8608,
-        "r2": 0.8151,
-        "band_accuracy": 0.8094,
-        "high_recall": 0.7225,
-        "high_precision": 0.8023,
-        "escalation_recall": 0.9635
+        "mae": 5.7005,
+        "rmse": 7.707,
+        "r2": 0.7425,
+        "band_accuracy": 0.7865,
+        "high_recall": 0.6465,
+        "high_precision": 0.7665,
+        "escalation_recall": 0.9519
       }
     },
     {
@@ -156,17 +158,17 @@
       "is_tree_based": false,
       "scales_inputs": true,
       "rationale": "Kernel method. Included for completeness even though it is unlikely to win: it fits a different kind of surface, so its result is informative either way.",
-      "train_seconds": 0.298,
+      "train_seconds": 0.621,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.7982,
-        "rmse": 6.1895,
-        "r2": 0.7937,
-        "band_accuracy": 0.8083,
-        "high_recall": 0.733,
-        "high_precision": 0.791,
-        "escalation_recall": 0.9661
+        "mae": 5.6881,
+        "rmse": 7.689,
+        "r2": 0.7437,
+        "band_accuracy": 0.7896,
+        "high_recall": 0.6818,
+        "high_precision": 0.7584,
+        "escalation_recall": 0.9643
       }
     },
     {
@@ -175,17 +177,17 @@
       "is_tree_based": false,
       "scales_inputs": true,
       "rationale": "Neural reference point. Answers whether the pattern needs a network at all, with a measurement rather than an assertion.",
-      "train_seconds": 0.736,
+      "train_seconds": 2.139,
       "cv_r2_mean": null,
       "cv_r2_sd": null,
       "metrics": {
-        "mae": 4.7298,
-        "rmse": 6.0055,
-        "r2": 0.8058,
-        "band_accuracy": 0.7958,
-        "high_recall": 0.7173,
-        "high_precision": 0.7569,
-        "escalation_recall": 0.9648
+        "mae": 5.5944,
+        "rmse": 7.4461,
+        "r2": 0.7596,
+        "band_accuracy": 0.7854,
+        "high_recall": 0.6515,
+        "high_precision": 0.7679,
+        "escalation_recall": 0.9396
       }
     }
   ]

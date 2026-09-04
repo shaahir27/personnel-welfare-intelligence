@@ -140,7 +140,18 @@ level, the underlying fact about one person does not.
 
 This signal was missing from the first build by accident. `family_separated` sat
 unused in `personnel.csv` while carrying 4.7 % of the synthetic label's
-variance; adding it moved model R² from 0.729 to 0.807.
+variance; adding it moved model R² from 0.729 to 0.807 **on the corpus of the
+day**. Both figures are historical: the corpus has since gained the gray-area
+group, which lowered every formula-recovery metric on purpose. The current
+number lives in `ml/evaluation/model_comparison_results.json` and is discussed
+in `docs/model_comparison_report.md` §5 — quote it from there, not from here.
+
+Adding the signal also created an obligation nobody noticed for two commits: no
+check-in question was tagged to it and no intervention named it, so a person
+whose largest contributing factor was family separation was never asked about
+it, and a case driven by it alone returned an empty recommendation list in
+silence. Both are fixed, and `tests/test_signal_coverage.py` now asserts the
+obligation for every signal so the tenth cannot repeat it.
 
 ### Why the tenure-overrun term applies only to hard-area postings
 

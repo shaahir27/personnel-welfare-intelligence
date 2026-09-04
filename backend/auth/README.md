@@ -8,9 +8,29 @@ Those are two different jobs and this module keeps them separate on purpose.
 | File | Job |
 | --- | --- |
 | `credentials.py` | Check a username and password against stored PBKDF2 hashes; return the account's role. |
-| `demo_accounts.json` | The three demo accounts. Hashes and salts only — no password is stored. |
+| `demo_accounts.json` | The five demo accounts. Hashes and salts only — no password is stored. |
 | `jwt_handler.py` | Issue and verify HS256 tokens. Stdlib `hmac`+`base64`, or PyJWT when importable. |
+| `token_revocation.py` | The denylist that lets one session be ended before its token expires. |
 | `rbac.py` | Read the acting principal, enforce per-role scope, and refuse any commander payload carrying individual data. |
+
+### The five roles, in two groups
+
+| Role | Group | Reaches |
+| --- | --- | --- |
+| `personnel` | both | Their own welfare record, and their own appointments |
+| `welfare_officer` | welfare | Cases the escalation rule admits |
+| `commander` | welfare | Unit aggregates only |
+| `medical_officer` | medical | Their own clinic schedule, one note per visit |
+| `establishment_admin` | medical | The doctor roster and availability |
+
+`settings.WELFARE_ROLES` and `settings.MEDICAL_ROLES` name the two groups, and
+they intersect in exactly one place: `personnel`. The person is the one party
+entitled to their own data on both sides of the boundary; nothing else is in
+both, and a test asserts it. A welfare officer holding a valid token gets a 403
+from every route in the medical domain, and a medical officer gets a 403 from
+every welfare route. See `backend/medical/README.md` for why medical
+confidentiality is treated as a stricter, separate boundary rather than another
+tier of the same one.
 
 ## Inputs and outputs
 
@@ -21,7 +41,9 @@ pair at the login route.
 
 - `credentials.authenticate(username, password) -> Account`
 - `jwt_handler.create_token(subject, role, expires_in) -> str`
-- `jwt_handler.verify_token(token) -> JwtClaims`
+- `jwt_handler.verify_token(token) -> JwtClaims` — also consults the revocation
+  denylist, so a signed-out token is refused everywhere a route looks
+- `token_revocation.revoke(jti, expires_at, reason) -> bool`
 - `rbac.principal_from_headers(headers) -> Principal`
 - `rbac.require_role(...)`, `rbac.require_self(...)` — raise `AuthorisationError`
 - `rbac.assert_commander_safe(payload)` — raise `IndividualDataLeak`
@@ -102,11 +124,44 @@ Two other things must change with it, both flagged where they live:
 
 ---
 
+### Revocation: why a stateless token now needs one stateful lookup
+
+An HS256 JWT is valid because its signature checks out, and nothing about
+signature verification can know that the holder pressed sign-out, that a device
+was handed in, or that an account was suspended ten minutes ago. Until
+`token_revocation.py` existed, `STATUS.md` recorded the consequence plainly: a
+token was valid until it expired and there was no way to end a session early.
+On a system holding welfare assessments, on the shared unit terminals these
+screens are meant to be usable on, an hour of un-endable session is the wrong
+default.
+
+Checking a denylist makes verification stateful, which is exactly the property
+JWTs are usually chosen to avoid. That cost is accepted because the alternatives
+are worse *here*: shortening expiry to minutes makes an officer sign in
+repeatedly during one case review, and rotating the signing secret ends
+**everybody's** session to end one.
+
+The cost is bounded twice. The denylist only holds tokens that have not yet
+expired — past its own `exp` a token is refused by the expiry check anyway, so
+the row is redundant and is purged. And the lookup is a primary-key hit on a
+table whose size is bounded by sessions-per-hour.
+
+The denylist stores the token's random `jti`, its expiry and a reason. It
+deliberately stores **no subject**: a denylist keyed by person would be a
+second, quieter record of individual activity, and this system already has one
+place where access to an individual is recorded, on purpose, with rules about
+who may read it.
+
+A token carrying no `jti` — issued before revocation existed — cannot be revoked
+and reports as not revoked. That is the honest answer rather than the
+safe-looking one: treating it as revoked would sign every held session out on
+deploy. Tokens are short-lived, so the window closes on its own.
+
 ## Known limits
 
-- **No refresh, no revocation, no session list.** A token is valid until it
-  expires (`settings.JWT_EXPIRY_MINUTES`). There is nowhere to say "end this
-  session now", which a real deployment needs.
+- **No refresh and no session list.** Sign-out works
+  (`POST /api/auth/logout`), but there is no way to enumerate a person's live
+  sessions or end all of them at once, which a real deployment would want.
 - **`/api/meta` and `/api/demo/identities` are unauthenticated.** The personal
   app needs the identity list *before* it can sign in as anybody. Neither
   returns a name or a service number, and `/api/demo/identities` is a demo

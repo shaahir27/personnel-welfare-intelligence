@@ -157,6 +157,16 @@ PERSONNEL_SCHEMA = TableSchema(
         _S("family_separated", "boolean"),
         _S("unit_operational_tempo", "float", non_negative=True),
         _S("exposure_propensity", "float", non_negative=True),
+        # Generation-only. Present on the roster CSV so a reader can see which
+        # people are the gray-area cases, and stripped before anything the
+        # model sees -- it is not in `hr_features.CONTEXT_COLUMNS`. Nullable
+        # because the empty string is the normal value for 95% of the roster.
+        _S(
+            "benign_profile",
+            "string",
+            nullable=True,
+            allowed_values=("",) + settings.BENIGN_PROFILE_NAMES,
+        ),
     ),
 )
 

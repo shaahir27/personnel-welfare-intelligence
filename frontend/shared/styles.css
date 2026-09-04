@@ -278,6 +278,16 @@ button.primary:hover { background: var(--accent); }
 button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text-dim); }
 button.ghost:hover { border-color: var(--accent-dim); color: var(--text); }
 
+/* An in-flow action that reads as a link rather than a control: used for
+   "show all eligible cases", where the point is that the remainder is one
+   click away rather than a prominent alternative to the prioritised view. */
+button.linklike {
+  font: inherit; font-size: 13px; padding: 0;
+  background: none; border: 0; color: var(--accent);
+  cursor: pointer; text-decoration: underline;
+}
+button.linklike:hover { color: var(--text); }
+
 select, input[type="text"], input[type="range"], textarea {
   font: inherit; background: var(--bg-input); color: var(--text);
   border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 7px 10px;

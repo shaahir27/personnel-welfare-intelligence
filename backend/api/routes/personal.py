@@ -23,6 +23,7 @@ should be asked to trust.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -35,7 +36,7 @@ from backend.api.store import ProcessedStore
 from backend.auth import rbac
 from backend.config import settings
 from backend.db import access_log
-from backend.post_model_analytics import escalation
+from backend.post_model_analytics import escalation, self_report_consistency
 
 QUESTIONS_PATH = Path(__file__).resolve().parent.parent / "wellness_questions.json"
 
@@ -116,12 +117,20 @@ def build_personal_summary(
         says so explicitly rather than omitting the field silently -- "we have
         not computed this" and "there is nothing to show" are different
         statements and the app renders them differently.
+
+        ``self_report_consistency`` is always present and is always the
+        person's own full view, including the numbers behind it. The officer
+        view of the same comparison carries no numbers at all -- see
+        ``post_model_analytics/self_report_consistency.py``. It is computed at
+        request time rather than in the pipeline because it depends on answers
+        the person may have submitted since the last batch run.
     """
     case = store.cases_by_id.get(pseudonym_id)
     if case is None:
         return None
 
     explanation = store.explanations.get(pseudonym_id)
+    consistency = self_report_consistency.compare(pseudonym_id, case["signals"])
     return {
         "pseudonym_id": pseudonym_id,
         "snapshot_date": case["snapshot_date"],
@@ -144,6 +153,7 @@ def build_personal_summary(
             else "A detailed factor breakdown has not been computed for your "
                  "record in this run. Your score and trend are unaffected."
         ),
+        "self_report_consistency": consistency.to_personal_dict(),
     }
 
 
@@ -285,6 +295,64 @@ async def submit_check_in(request: Request) -> JSONResponse:
     )
 
 
+async def check_in_history(request: Request) -> JSONResponse:
+    """GET /api/personal/{pseudonym_id}/check-in/history -- your own answers back.
+
+    Returns every check-in this person has submitted, newest first, with the
+    question text resolved so the app does not have to hold the bank itself,
+    plus the consistency comparison for the most recent one.
+
+    Personnel only, and only their own. There is deliberately no officer path
+    to this route: an officer is told *that* a self-report diverged from the
+    duty record and on which indicator, which is what a welfare conversation
+    needs, and never what the person actually wrote. A person who believes
+    their answers are readable upward answers differently, and the whole
+    instrument stops measuring anything.
+    """
+    principal = rbac.principal_from_headers(request.headers)
+    rbac.require_role(principal, settings.ROLE_PERSONNEL)
+    pseudonym_id = request.path_params["pseudonym_id"]
+    rbac.require_self(principal, pseudonym_id)
+
+    store: ProcessedStore = request.app.state.store
+    bank = _load_questions()
+    text_by_id = {
+        str(question["id"]): question["text"]
+        for question in bank["general"]
+        + [q for group in bank["by_signal"].values() for q in group]
+    }
+
+    submissions = checkin_store.submissions_for(pseudonym_id)
+    rendered = [
+        {
+            "submitted_at": record.get("submitted_at"),
+            "answers": [
+                {**answer, "text_asked": text_by_id.get(str(answer.get("question_id")), "")}
+                for answer in record.get("answers", [])
+            ],
+        }
+        for record in submissions
+    ]
+
+    case = store.cases_by_id.get(pseudonym_id)
+    consistency = self_report_consistency.compare(
+        pseudonym_id, (case or {}).get("signals", {}), submissions=submissions
+    )
+
+    return JSONResponse(
+        {
+            "pseudonym_id": pseudonym_id,
+            "submission_count": len(rendered),
+            "submissions": rendered,
+            "self_report_consistency": consistency.to_personal_dict(),
+            "note": (
+                "Your answers are yours. They are shown here so you can read "
+                "back what you said. No other role can retrieve them."
+            ),
+        }
+    )
+
+
 async def privacy(request: Request) -> JSONResponse:
     """GET /api/personal/{pseudonym_id}/privacy -- what the system holds and why.
 
@@ -312,7 +380,9 @@ async def privacy(request: Request) -> JSONResponse:
                 "Your name and service number are not stored with your welfare "
                 "data. Everything in this system is held against the pseudonym "
                 f"above ({pseudonym_id}). The mapping back to you is kept in a "
-                "separate, access-controlled store."
+                "separate, access-controlled store that this server never opens, "
+                "and every attempt to use it -- granted or refused -- is recorded "
+                "with the reason given."
             ),
             "data_categories": [
                 {
@@ -347,6 +417,37 @@ async def privacy(request: Request) -> JSONResponse:
                     "used_for": "your own record; context for support if you ask for it",
                     "visible_to": "you only",
                     "retention_days": settings.RETENTION_RISK_SCORES_DAYS,
+                    "note": (
+                        "Your answers never change your score. The nine indicators "
+                        "are computed from HR records alone, so answering, or not "
+                        "answering, cannot move your number in either direction."
+                    ),
+                },
+                {
+                    "category": "Self-report comparison",
+                    "examples": (
+                        "whether an answer you gave about an indicator differs from "
+                        "what the duty and leave records show for that same indicator"
+                    ),
+                    "voluntary": True,
+                    "source": "computed from your own answers; nothing is stored",
+                    "used_for": (
+                        "showing you where the two differ, and telling a welfare "
+                        "officer that they differ so a conversation starts in the "
+                        "right place"
+                    ),
+                    "visible_to": (
+                        "you, in full; a welfare officer sees only which indicator "
+                        "differed, never your answer, and only on a case already "
+                        "visible to them"
+                    ),
+                    "retention_days": settings.RETENTION_RISK_SCORES_DAYS,
+                    "note": (
+                        "This is not a measure of how honest you are and is never "
+                        "recorded as one. A difference can mean the duty extract is "
+                        "stale, or that you cope differently from what the numbers "
+                        "suggest. It never affects your score or who can see you."
+                    ),
                 },
                 {
                     "category": "Welfare risk score",
@@ -356,6 +457,58 @@ async def privacy(request: Request) -> JSONResponse:
                     "used_for": "offering welfare support early",
                     "visible_to": officer_visibility,
                     "retention_days": settings.RETENTION_RISK_SCORES_DAYS,
+                },
+                {
+                    "category": "Identity mapping",
+                    "examples": "the link between the pseudonym above and your name",
+                    "voluntary": False,
+                    "source": "created once when your HR record first entered the system",
+                    "used_for": (
+                        "letting a welfare officer actually reach you when they "
+                        "decide to offer support -- nothing else"
+                    ),
+                    "visible_to": (
+                        "nobody through this app. It is held in a separate store "
+                        "that this server does not open, and the only way back to "
+                        "your name is a command run against that store by a "
+                        "welfare officer with a written reason, which is recorded "
+                        "whether it is allowed or refused."
+                    ),
+                    "retention_days": settings.RETENTION_HR_FEATURES_DAYS,
+                    "note": (
+                        "This app deliberately cannot tell you how many times that "
+                        "has happened. Reading the count would mean giving this "
+                        "server access to the file holding the mapping and the key "
+                        "that produced it, and that separation is the thing "
+                        "protecting you if this server is ever compromised. The "
+                        "trail is kept for oversight and is read from the store "
+                        "itself."
+                    ),
+                },
+                {
+                    "category": "Welfare actions taken",
+                    "examples": (
+                        "that leave was arranged, that a welfare conversation was "
+                        "offered, that a roster review was raised with your unit"
+                    ),
+                    "voluntary": False,
+                    "source": "recorded by a welfare officer when they act on a case",
+                    "used_for": (
+                        "so the next officer picking the case up knows what has "
+                        "already been done, and so the organisation can show it "
+                        "responded"
+                    ),
+                    "visible_to": (
+                        "the welfare officers who can already see your case. Not "
+                        "your commander, and not part of any service record."
+                    ),
+                    "retention_days": settings.RETENTION_INTERVENTION_LOG_DAYS,
+                    "note": (
+                        "This records what the welfare system did, never whether "
+                        "you complied with anything. It cannot be used in a "
+                        "disciplinary, posting or promotion decision, and the "
+                        "system does not compute any score or statistic from it."
+                    ),
                 },
                 {
                     "category": "Record-access log",
@@ -480,6 +633,11 @@ def routes() -> List[Route]:
         Route("/api/personal/{pseudonym_id}/history", history, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/check-in", check_in_questions, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/check-in", submit_check_in, methods=["POST"]),
+        Route(
+            "/api/personal/{pseudonym_id}/check-in/history",
+            check_in_history,
+            methods=["GET"],
+        ),
         Route("/api/personal/{pseudonym_id}/privacy", privacy, methods=["GET"]),
         Route("/api/personal/{pseudonym_id}/notifications", notifications, methods=["GET"]),
     ]

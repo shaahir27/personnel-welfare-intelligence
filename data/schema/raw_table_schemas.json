@@ -205,6 +205,21 @@
         "nullable": false,
         "non_negative": true,
         "allowed_values": null
+      },
+      {
+        "name": "benign_profile",
+        "kind": "string",
+        "required": true,
+        "nullable": true,
+        "non_negative": false,
+        "allowed_values": [
+          "",
+          "training_cadre",
+          "course_attendee",
+          "voluntary_hard_area",
+          "planned_surge",
+          "recent_return"
+        ]
       }
     ]
   },

@@ -14,6 +14,12 @@ What a caller gets back is deliberately minimal: the token, the role it
 carries, the subject it is scoped to, and when it expires. No account details,
 no list of what the role can do. A client that wants to know whether it may
 call something calls it.
+
+``POST /api/auth/logout`` is the other half. Until it existed a token was valid
+for its full hour no matter what the holder did, which on a shared unit terminal
+is the wrong default for a system holding welfare assessments. It revokes the
+presented token; ``backend/auth/token_revocation.py`` holds the denylist and
+argues the trade-off that introducing one makes.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from backend.api import request_parsing
-from backend.auth import credentials, jwt_handler, rbac
+from backend.auth import credentials, jwt_handler, rbac, token_revocation
 from backend.config import settings
 
 
@@ -93,10 +99,78 @@ async def login(request: Request) -> JSONResponse:
     )
 
 
+async def logout(request: Request) -> JSONResponse:
+    """POST /api/auth/logout -- end this session now, not when the token expires.
+
+    Takes the token from the ``Authorization`` header, verifies it, and adds
+    its ``jti`` to the revocation denylist. Every later request carrying it is
+    refused with a 403.
+
+    Returns:
+        ``{"revoked": bool, "detail": str}``. ``revoked`` is False when the
+        token was already revoked, which is a success, not an error -- a client
+        retrying sign-out over a flaky link should not be told it failed for
+        succeeding twice.
+
+    Note:
+        A token with no ``jti`` -- issued before revocation existed -- cannot
+        be revoked, and the response says so plainly rather than reporting a
+        sign-out that did not happen. Tokens are short-lived, so that window
+        closes on its own.
+    """
+    principal = rbac.principal_from_headers(request.headers)
+    authorization = str(request.headers.get("Authorization", "") or "").strip()
+    if not authorization.lower().startswith("bearer "):
+        return JSONResponse(
+            {
+                "detail": (
+                    "sign-out needs the token to end, sent as "
+                    "Authorization: Bearer <token>"
+                )
+            },
+            status_code=400,
+        )
+
+    claims = jwt_handler.verify_token(authorization.split(None, 1)[1].strip())
+    if not claims.token_id:
+        return JSONResponse(
+            {
+                "revoked": False,
+                "detail": (
+                    "This token carries no session id and cannot be revoked. It "
+                    "was issued before session revocation existed and will expire "
+                    "on its own; signing in again issues one that can be ended."
+                ),
+            },
+            status_code=409,
+        )
+
+    newly = token_revocation.revoke(
+        jti=claims.token_id,
+        expires_at=claims.expires_at,
+        reason=token_revocation.REASON_LOGOUT,
+    )
+    token_revocation.purge_expired()
+    return JSONResponse(
+        {
+            "revoked": newly,
+            "role": principal.role,
+            "detail": (
+                "Session ended. This token is refused from now on."
+                if newly
+                else "This session had already been ended."
+            ),
+        }
+    )
+
+
 def routes() -> List[Route]:
     """Return this module's routes.
 
     Returns:
         Starlette routes for authentication.
     """
-    return [Route("/api/auth/login", login, methods=["POST"])]
+    return [
+        Route("/api/auth/login", login, methods=["POST"]),
+        Route("/api/auth/logout", logout, methods=["POST"]),
+    ]

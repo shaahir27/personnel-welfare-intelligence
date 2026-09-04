@@ -92,6 +92,8 @@ class RiskClassification:
             first. A single entry when the range sits inside one band.
         band_certainty: ``certain`` when the range sits inside one band,
             ``borderline`` when it crosses a cutoff, None when uncalibrated.
+        band_margin: The margin, in points, within which a score counts as
+            sitting on a cutoff rather than clear of it.
     """
 
     score: float
@@ -105,11 +107,39 @@ class RiskClassification:
     interval_coverage: float | None = None
     bands_plausible: tuple = ()
     band_certainty: str | None = None
+    band_margin: float = settings.RISK_BAND_MARGIN
 
     @property
     def is_borderline(self) -> bool:
         """Whether the calibrated range crosses a band cutoff."""
         return self.band_certainty == BAND_BORDERLINE
+
+    @property
+    def barely_over_cutoff(self) -> bool:
+        """Whether the score only just cleared the cutoff that admitted its band.
+
+        False at Normal, which has no cutoff below it. This is a statement
+        about the point estimate, not about the measurement -- see
+        :attr:`is_borderline`, which is the other one, and note that a case can
+        be either without being the other.
+        """
+        return (
+            self.distance_to_band_below is not None
+            and self.distance_to_band_below <= self.band_margin
+        )
+
+    @property
+    def barely_under_next_band(self) -> bool:
+        """Whether the score is within the margin of the next band up.
+
+        False at High, which has no band above it. Worth surfacing for the
+        same reason as its opposite: a Moderate case at 64.1 and one at 41 are
+        not the same case, and the band alone does not say which is which.
+        """
+        return (
+            self.distance_to_next_band is not None
+            and self.distance_to_next_band <= self.band_margin
+        )
 
     def to_dict(self) -> Dict[str, object]:
         """Return a JSON-serialisable form for API responses."""
@@ -141,7 +171,33 @@ class RiskClassification:
             "band_certainty": self.band_certainty,
             "is_borderline": self.is_borderline,
             "borderline_note": BORDERLINE_NOTE if self.is_borderline else None,
+            "band_margin": round(float(self.band_margin), 1),
+            "barely_over_cutoff": self.barely_over_cutoff,
+            "barely_under_next_band": self.barely_under_next_band,
+            "proximity_note": self.proximity_note(),
         }
+
+    def proximity_note(self) -> str | None:
+        """Return the sentence describing how close this score is to a cutoff.
+
+        Returns:
+            One sentence, or None when the score sits clear of both cutoffs.
+            Phrased as a fact about the number rather than a hedge about the
+            person, so an officer reads "1.2 points over" rather than
+            "possibly not really High".
+        """
+        if self.barely_over_cutoff:
+            return (
+                f"This score is {self.distance_to_band_below:.1f} points above the "
+                f"cutoff that puts it in {self.level}. It is at the bottom of the "
+                f"band, not in the middle of it."
+            )
+        if self.barely_under_next_band:
+            return (
+                f"This score is {self.distance_to_next_band:.1f} points below the "
+                f"next band up. It is at the top of {self.level}."
+            )
+        return None
 
 
 def band_for(score: float) -> str:
@@ -208,6 +264,15 @@ def classify_score(
         estimate) but it is labelled provisional, so that "66, borderline" and
         "84, certain" stop looking like the same thing on a screen. This is
         the concrete form of PS technical challenge #3.
+
+    On the proximity flags:
+        ``barely_over_cutoff`` and ``barely_under_next_band`` are a separate
+        statement from the borderline flag and are computed without any
+        calibration at all. Borderline says the *measurement* cannot settle
+        the band; these say the *point estimate* is sitting on the line. Both
+        can be true, either can be true alone, and they are labelled
+        separately everywhere they surface because collapsing them would lose
+        the distinction between "we are unsure" and "it is close".
     """
     if score is None or (isinstance(score, float) and np.isnan(score)):
         raise ValueError("cannot classify a missing score")

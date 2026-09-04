@@ -129,10 +129,22 @@ async def near_misses(request: Request) -> JSONResponse:
     rbac.require_role(principal, settings.ROLE_COMMANDER)
 
     store: ProcessedStore = request.app.state.store
+    closest = store.meta.get("near_miss_closest_units") or []
     payload = rbac.assert_commander_safe(
         {
             "generated_at": store.meta.get("generated_at"),
             "findings": store.near_misses,
+            "finding_count": len(store.near_misses),
+            "closest_units": closest,
+            "closest_units_note": (
+                "All three conditions must hold at once, so a run can return no "
+                "confirmed finding while a unit sits a fraction of a point short "
+                "on one of them. These are the units nearest the line and what "
+                "is holding each back. An empty findings list is a result, not "
+                "an absence of data."
+                if not store.near_misses
+                else "Units nearest the threshold, whether or not they crossed it."
+            ),
             "criteria": {
                 "demand_signal_min": settings.NEAR_MISS_DEMAND_SIGNAL_MIN,
                 "recovery_signal_min": settings.NEAR_MISS_RECOVERY_SIGNAL_MIN,

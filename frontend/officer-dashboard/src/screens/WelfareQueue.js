@@ -1,6 +1,16 @@
 /**
  * WelfareQueue — the prioritised list of cases visible at officer level.
  * One job: show which cases have met the escalation threshold, most urgent first.
+ *
+ * Two counts, and the screen must not conflate them. `total_eligible` is how
+ * many people the escalation rule admits — a statement about those people.
+ * `visible_count` is how many this view shows first, capped at the officer's
+ * working capacity — a statement about the officer. Reporting only the second
+ * against the population would tell a reader the rule admits far fewer people
+ * than it does, which is the one thing this header must not do.
+ *
+ * The held-back cases are one click away, never hidden: "show all eligible"
+ * re-requests with ?all=1.
  */
 import { api } from "../../../shared/api.js";
 import { badge, certaintyBadge, el, trendText } from "../../../shared/ui.js";
@@ -8,19 +18,44 @@ import { badge, certaintyBadge, el, trendText } from "../../../shared/ui.js";
 /**
  * Render the welfare queue.
  * @param {Function} go Navigation callback (screenId, caseId).
+ * @param {boolean} [showAll] Lift the capacity cap and list every eligible case.
  * @returns {Promise<HTMLElement>} The screen node.
  */
-export async function renderWelfareQueue(go) {
-  const data = await api.officer.queue();
+export async function renderWelfareQueue(go, showAll) {
+  const data = await api.officer.queue(showAll);
   const root = el("div");
   root.appendChild(el("h1", { class: "page-title", text: "Welfare queue" }));
   root.appendChild(el("p", { class: "page-sub", text:
-    `${data.visible_count} of ${data.population} personnel are visible at officer level ` +
-    `as at ${data.snapshot_date}.` }));
+    `${data.total_eligible} of ${data.population} personnel meet the escalation rule ` +
+    `as at ${data.snapshot_date}. Showing ${data.visible_count}.` }));
   root.appendChild(el("div", { class: "note accent", text: data.visibility_rule }));
+  if (data.capacity_rule) {
+    root.appendChild(el("div", { class: "note", text: data.capacity_rule }));
+  }
+  if (data.held_back_count > 0) {
+    const link = el("button", {
+      class: "linklike",
+      text: `Show all ${data.total_eligible} eligible cases`,
+      onclick: async () => {
+        const full = await renderWelfareQueue(go, true);
+        root.replaceWith(full);
+      },
+    });
+    root.appendChild(el("p", {}, [link]));
+  } else if (showAll) {
+    const link = el("button", {
+      class: "linklike",
+      text: "Back to the prioritised view",
+      onclick: async () => {
+        const capped = await renderWelfareQueue(go, false);
+        root.replaceWith(capped);
+      },
+    });
+    root.appendChild(el("p", {}, [link]));
+  }
   if (data.band_certainty_note) {
     root.appendChild(el("div", { class: "note", text:
-      `${data.band_certainty_note} ${data.borderline_count} of ${data.visible_count} visible cases are borderline.` }));
+      `${data.band_certainty_note} ${data.borderline_count} of ${data.visible_count} shown cases are borderline.` }));
   }
 
   const table = el("table", {}, [el("thead", {}, [el("tr", {}, [
